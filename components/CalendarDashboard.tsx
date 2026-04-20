@@ -1,5 +1,5 @@
 "use client"
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { format, startOfDay, isWithinInterval, isSameDay, addMonths, eachDayOfInterval, startOfMonth, endOfMonth } from 'date-fns';
 import { User, LogOut, Plus, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Room, RoomStay } from '@/types/domain';
@@ -14,6 +14,8 @@ interface CalendarProps {
 export default function CalendarDashboard({ rooms, stays, onCellClick, onCancelStay }: CalendarProps) {
   const today = startOfDay(new Date());
   const [monthOffset, setMonthOffset] = useState(0);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const todayHeaderRef = useRef<HTMLTableCellElement | null>(null);
 
   const visibleMonthDate = addMonths(today, monthOffset);
   const days = useMemo(
@@ -24,6 +26,22 @@ export default function CalendarDashboard({ rooms, stays, onCellClick, onCancelS
       }),
     [visibleMonthDate],
   );
+
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    const todayCell = todayHeaderRef.current;
+
+    if (!container || !todayCell) {
+      return;
+    }
+
+    const targetScrollLeft = Math.max(
+      0,
+      todayCell.offsetLeft - container.clientWidth / 2 + todayCell.clientWidth / 2,
+    );
+
+    container.scrollLeft = targetScrollLeft;
+  }, [days]);
 
   return (
     <div className="bg-white rounded-3xl shadow-xl overflow-hidden border border-slate-200">
@@ -56,13 +74,17 @@ export default function CalendarDashboard({ rooms, stays, onCellClick, onCancelS
         </div>
       </div>
 
-      <div className="overflow-x-auto">
+      <div ref={scrollContainerRef} className="overflow-x-auto">
         <table className="w-full border-collapse">
           <thead>
             <tr>
               <th className="p-4 bg-slate-100 border-b border-r text-left text-xs font-black uppercase text-slate-500 w-32 sticky left-0 z-10">Room</th>
               {days.map(day => (
-                <th key={day.toString()} className={`p-4 border-b text-center min-w-[140px] ${isSameDay(day, today) ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-50 text-slate-600'}`}>
+                <th
+                  key={day.toString()}
+                  ref={isSameDay(day, today) ? todayHeaderRef : undefined}
+                  className={`p-4 border-b text-center min-w-[140px] ${isSameDay(day, today) ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-50 text-slate-600'}`}
+                >
                   <p className="text-xs font-bold uppercase">{format(day, 'EEE')}</p>
                   <p className="text-lg font-black">{format(day, 'MMM d')}</p>
                 </th>
