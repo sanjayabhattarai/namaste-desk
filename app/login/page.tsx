@@ -2,7 +2,10 @@
 
 import { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { clearSession, getSession, saveSession } from '@/lib/authSession';
+import { addYears } from 'date-fns';
+import HotelRegistrationSection from '@/components/HotelRegistrationSection';
+import RoomSetupList, { RoomSetupRow } from '@/components/RoomSetupList';
+import { clearSession, getSession, HotelProfile, HotelRoomMaster, saveSession } from '@/lib/authSession';
 import { supabase } from '@/lib/supabaseClient';
 
 type AuthMode = 'login' | 'signup';
@@ -12,26 +15,105 @@ export default function LoginPage() {
   const [mode, setMode] = useState<AuthMode>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [hotelName, setHotelName] = useState('');
+  const [roomCount, setRoomCount] = useState('1');
+  const [checkInTime, setCheckInTime] = useState('12:00');
+  const [checkOutTime, setCheckOutTime] = useState('10:00');
+  const [timezone, setTimezone] = useState('Asia/Kathmandu');
+  const [roomRows, setRoomRows] = useState<RoomSetupRow[]>([
+    { roomNumber: '101', roomName: 'Deluxe 101', roomType: 'Standard', rate: '1500' },
+  ]);
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  const getHotelApproval = async (ownerId: string) => {
+  const buildRoomsArray = () => {
+    return roomRows
+      .map((room, index) => ({
+        roomNumber: Number(room.roomNumber) || index + 1,
+        roomName: room.roomName.trim() || `Room ${room.roomNumber || index + 1}`,
+        roomType: room.roomType.trim() || 'Standard',
+        rate: Number(room.rate) || 1500,
+      }))
+      .filter((room) => room.roomName.length > 0);
+  };
+
+  const buildHotelProfile = (): HotelProfile => {
+    const safeRoomCount = roomRows.length;
+    const roomMaster = buildRoomsArray();
+
+    return {
+      hotelName: hotelName.trim(),
+      roomCount: safeRoomCount,
+      roomNames: roomMaster.map((room) => room.roomName).join(', '),
+      checkInTime,
+      checkOutTime,
+      timezone: timezone.trim() || 'Asia/Kathmandu',
+      roomMaster,
+    };
+  };
+
+  const getHotelContext = async (ownerId: string) => {
     const { data, error } = await supabase
       .from('hotels')
-      .select('is_approved')
+      .select('is_approved, hotel_name, room_count, room_names, check_in_time, check_out_time, timezone')
       .eq('owner_id', ownerId)
       .maybeSingle();
 
     if (error) {
-      return { isApproved: false, error };
+      return { isApproved: false, error, hotelProfile: undefined as HotelProfile | undefined };
     }
 
     if (!data) {
-      return { isApproved: false, error: null };
+      return { isApproved: false, error: null, hotelProfile: undefined as HotelProfile | undefined };
     }
 
-    return { isApproved: Boolean(data.is_approved), error: null };
+    const { data: roomRows, error: roomRowsError } = await supabase
+      .from('hotel_rooms')
+      .select('room_number, room_name, room_type, rate')
+      .eq('owner_id', ownerId)
+      .order('room_number', { ascending: true });
+
+    if (roomRowsError) {
+      return { isApproved: Boolean(data.is_approved), error: roomRowsError, hotelProfile: undefined as HotelProfile | undefined };
+    }
+
+    const roomMaster: HotelRoomMaster[] = (roomRows ?? []).map((row) => ({
+      roomNumber: Number(row.room_number),
+      roomName: row.room_name ?? `Room ${row.room_number}`,
+      roomType: row.room_type ?? 'Standard',
+      rate: Number(row.rate ?? 1500),
+    }));
+
+    const hotelProfile: HotelProfile = {
+      hotelName: data.hotel_name ?? '',
+      roomCount: Number(data.room_count ?? roomMaster.length ?? 0),
+      roomNames: data.room_names ?? roomMaster.map((room) => room.roomName).join(', '),
+      checkInTime: data.check_in_time ?? '12:00',
+      checkOutTime: data.check_out_time ?? '10:00',
+      timezone: data.timezone ?? 'Asia/Kathmandu',
+      roomMaster,
+    };
+
+    return { isApproved: Boolean(data.is_approved), error: null, hotelProfile };
+  };
+
+  const saveLoggedInSession = (
+    session: {
+      accessToken: string;
+      refreshToken: string;
+      userId: string;
+      email: string;
+      expiresAt: number | null;
+    },
+    isApproved: boolean,
+    hotelProfile?: HotelProfile,
+  ) => {
+    saveSession({
+      ...session,
+      isApproved,
+      hotelProfile,
+    });
   };
 
   useEffect(() => {
@@ -61,6 +143,20 @@ export default function LoginPage() {
     setIsLoading(true);
 
     if (mode === 'signup') {
+      const hotelProfile = buildHotelProfile();
+
+      if (!hotelProfile.hotelName || hotelProfile.roomCount <= 0) {
+        setErrorMessage('Hotel name and a valid room count are required for registration.');
+        setIsLoading(false);
+        return;
+      }
+
+      if (!hotelProfile.roomMaster || hotelProfile.roomMaster.length === 0) {
+        setErrorMessage('Please add at least one room in the room setup section.');
+        setIsLoading(false);
+        return;
+      }
+
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
@@ -74,15 +170,14 @@ export default function LoginPage() {
           });
 
           if (fallbackLogin.data.session && fallbackLogin.data.user) {
-            const approvalResult = await getHotelApproval(fallbackLogin.data.user.id);
-            saveSession({
+            const approvalResult = await getHotelContext(fallbackLogin.data.user.id);
+            saveLoggedInSession({
               accessToken: fallbackLogin.data.session.access_token,
               refreshToken: fallbackLogin.data.session.refresh_token,
               userId: fallbackLogin.data.user.id,
               email: fallbackLogin.data.user.email ?? email,
               expiresAt: fallbackLogin.data.session.expires_at ?? null,
-              isApproved: approvalResult.isApproved,
-            });
+            }, approvalResult.isApproved, approvalResult.hotelProfile ?? hotelProfile);
             router.replace(approvalResult.isApproved ? '/dashboard' : '/pending-approval');
             return;
           }
@@ -105,11 +200,20 @@ export default function LoginPage() {
         return;
       }
 
+      const createdUser = data.user;
+
       const { error: hotelInsertError } = await supabase
         .from('hotels')
         .insert({
-          owner_id: data.user.id,
+          owner_id: createdUser.id,
           is_approved: false,
+          hotel_name: hotelProfile.hotelName,
+          room_count: hotelProfile.roomCount,
+          room_names: hotelProfile.roomNames,
+          check_in_time: hotelProfile.checkInTime,
+          check_out_time: hotelProfile.checkOutTime,
+          timezone: hotelProfile.timezone,
+          subscription_end_date: addYears(new Date(), 1).toISOString(),
         });
 
       if (hotelInsertError) {
@@ -120,15 +224,37 @@ export default function LoginPage() {
         return;
       }
 
+      const roomRows = hotelProfile.roomMaster ?? [];
+      if (roomRows.length > 0) {
+        const { error: roomInsertError } = await supabase
+          .from('hotel_rooms')
+          .insert(
+            roomRows.map((room) => ({
+              owner_id: createdUser.id,
+              room_number: room.roomNumber,
+              room_name: room.roomName,
+              room_type: room.roomType,
+              rate: room.rate,
+            })),
+          );
+
+        if (roomInsertError) {
+          setErrorMessage(`Account created, but room master setup failed: ${roomInsertError.message}`);
+          setMode('login');
+          setPassword('');
+          setIsLoading(false);
+          return;
+        }
+      }
+
       if (data.session && data.user) {
-        saveSession({
+        saveLoggedInSession({
           accessToken: data.session.access_token,
           refreshToken: data.session.refresh_token,
-          userId: data.user.id,
-          email: data.user.email ?? email,
+          userId: createdUser.id,
+          email: createdUser.email ?? email,
           expiresAt: data.session.expires_at ?? null,
-          isApproved: false,
-        });
+        }, false, hotelProfile);
         router.replace('/pending-approval');
         return;
       }
@@ -151,7 +277,7 @@ export default function LoginPage() {
       return;
     }
 
-    const approvalResult = await getHotelApproval(data.user.id);
+    const approvalResult = await getHotelContext(data.user.id);
 
     if (approvalResult.error) {
       setErrorMessage(`Login succeeded, but approval check failed: ${approvalResult.error.message}`);
@@ -165,6 +291,7 @@ export default function LoginPage() {
         .insert({
           owner_id: data.user.id,
           is_approved: false,
+          timezone: 'Asia/Kathmandu',
         });
 
       if (createHotelError && !createHotelError.message.toLowerCase().includes('duplicate key')) {
@@ -174,14 +301,13 @@ export default function LoginPage() {
       }
     }
 
-    saveSession({
+    saveLoggedInSession({
       accessToken: data.session.access_token,
       refreshToken: data.session.refresh_token,
       userId: data.user.id,
       email: data.user.email ?? email,
       expiresAt: data.session.expires_at ?? null,
-      isApproved: approvalResult.isApproved,
-    });
+    }, approvalResult.isApproved, approvalResult.hotelProfile);
 
     router.replace(approvalResult.isApproved ? '/dashboard' : '/pending-approval');
   };
@@ -222,6 +348,51 @@ export default function LoginPage() {
         </div>
 
         <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+          {mode === 'signup' ? (
+            <>
+            <HotelRegistrationSection
+              hotelName={hotelName}
+              roomCount={roomCount}
+              checkInTime={checkInTime}
+              checkOutTime={checkOutTime}
+              timezone={timezone}
+              onHotelNameChange={setHotelName}
+              onRoomCountChange={(value) => {
+                const nextCount = Math.max(1, Number(value) || 1);
+                setRoomCount(String(nextCount));
+                setRoomRows((prev) => {
+                  if (prev.length === nextCount) {
+                    return prev;
+                  }
+
+                  if (prev.length < nextCount) {
+                    const rowsToAdd = Array.from({ length: nextCount - prev.length }, (_, index) => ({
+                      roomNumber: String(prev.length + index + 1),
+                      roomName: '',
+                      roomType: 'Standard',
+                      rate: '1500',
+                    }));
+
+                    return [...prev, ...rowsToAdd];
+                  }
+
+                  return prev.slice(0, nextCount);
+                });
+              }}
+              onCheckInTimeChange={setCheckInTime}
+              onCheckOutTimeChange={setCheckOutTime}
+              onTimezoneChange={setTimezone}
+            />
+            <RoomSetupList
+              rooms={roomRows}
+              onChange={(nextRooms) => {
+                setRoomRows(nextRooms);
+                setRoomCount(String(nextRooms.length));
+              }}
+            />
+            </>
+          ) : null}
+
           <div>
             <label htmlFor="email" className="block text-sm font-bold text-slate-700 mb-1">Email</label>
             <input
@@ -261,13 +432,16 @@ export default function LoginPage() {
             disabled={isLoading}
             className="w-full py-3 rounded-xl bg-emerald-700 text-white font-black hover:bg-emerald-800 disabled:opacity-60"
           >
-            {isLoading
-              ? mode === 'login'
-                ? 'Signing in...'
-                : 'Creating account...'
-              : mode === 'login'
-                ? 'Sign In'
-                : 'Create Account'}
+            <span className="inline-flex items-center justify-center gap-2">
+              {isLoading ? <span className="h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin" /> : null}
+              {isLoading
+                ? mode === 'login'
+                  ? 'Signing in...'
+                  : 'Saving hotel setup...'
+                : mode === 'login'
+                  ? 'Sign In'
+                  : 'Create Account'}
+            </span>
           </button>
         </form>
       </div>

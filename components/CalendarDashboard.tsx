@@ -1,5 +1,5 @@
 "use client"
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { format, startOfDay, isWithinInterval, isSameDay, addMonths, eachDayOfInterval, startOfMonth, endOfMonth } from 'date-fns';
 import { User, LogOut, Plus, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Room, RoomStay } from '@/types/domain';
@@ -18,14 +18,10 @@ export default function CalendarDashboard({ rooms, stays, onCellClick, onCancelS
   const todayHeaderRef = useRef<HTMLTableCellElement | null>(null);
 
   const visibleMonthDate = addMonths(today, monthOffset);
-  const days = useMemo(
-    () =>
-      eachDayOfInterval({
-        start: startOfMonth(visibleMonthDate),
-        end: endOfMonth(visibleMonthDate),
-      }),
-    [visibleMonthDate],
-  );
+  const days = eachDayOfInterval({
+    start: startOfMonth(visibleMonthDate),
+    end: endOfMonth(visibleMonthDate),
+  });
 
   useEffect(() => {
     const container = scrollContainerRef.current;
@@ -41,7 +37,7 @@ export default function CalendarDashboard({ rooms, stays, onCellClick, onCancelS
     );
 
     container.scrollLeft = targetScrollLeft;
-  }, [days]);
+  }, [monthOffset]);
 
   return (
     <div className="bg-white rounded-3xl shadow-xl overflow-hidden border border-slate-200">
@@ -95,7 +91,10 @@ export default function CalendarDashboard({ rooms, stays, onCellClick, onCancelS
             {rooms.map(room => (
               <tr key={room.id} className="hover:bg-slate-50 transition-colors">
                 <td className="p-4 border-b border-r font-bold text-slate-700 sticky left-0 bg-white z-10">
-                  Room {room.id}
+                  <div className="leading-tight">
+                    <div>{room.roomName ?? `Room ${room.id}`}</div>
+                    {room.roomType ? <div className="text-[10px] text-slate-400 font-semibold uppercase">{room.roomType}</div> : null}
+                  </div>
                 </td>
                 {days.map(day => {
                   const staysForRoomDay = stays

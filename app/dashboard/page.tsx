@@ -1,5 +1,5 @@
 "use client"
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { addDays, isSameDay, isWithinInterval, startOfDay, subDays } from 'date-fns';
 import { Banknote, Users } from 'lucide-react';
@@ -9,9 +9,9 @@ import BillingView from '@/components/BillingView';
 import PastReceiptModal from '@/components/PastReceiptModal';
 import ReceiptSearchPanel from '@/components/ReceiptSearchPanel';
 import TopNav from '@/components/TopNav';
-import { clearSession, getSession } from '@/lib/authSession';
-import { seedPastReceipts, seedRooms } from '@/lib/mockData';
-import { Bill, BillingDetails, BillingDraft, CheckInFormData, RoomStay } from '@/types/domain';
+import { clearSession, getSession, LocalAuthSession, saveSession } from '@/lib/authSession';
+import { createAuthedSupabaseClient } from '@/lib/supabaseClient';
+import { Bill, BillingDetails, BillingDraft, CheckInFormData, Room, RoomStay } from '@/types/domain';
 
 const EMPTY_BILLING_DRAFT: BillingDraft = {
   foodItems: [],
@@ -23,51 +23,125 @@ const normalizePhone = (value: string) => value.replace(/[\s+\-()]/g, '');
 
 export default function NamasteDesk() {
   const router = useRouter();
-  const rooms = seedRooms;
+  const [rooms, setRooms] = useState<Room[]>([]);
+  const [isRoomsLoading, setIsRoomsLoading] = useState(true);
   const [totalSales, setTotalSales] = useState(0);
   const [activeRoomId, setActiveRoomId] = useState<number | null>(null);
   const [activeStayId, setActiveStayId] = useState<number | null>(null);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [isBillingOpen, setIsBillingOpen] = useState(false);
   const [isCheckInOpen, setIsCheckInOpen] = useState(false);
-  const [pastReceipts, setPastReceipts] = useState<Bill[]>(seedPastReceipts);
+  const [pastReceipts, setPastReceipts] = useState<Bill[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [showPastBill, setShowPastBill] = useState<Bill | null>(null);
   const [billingDraftsByStay, setBillingDraftsByStay] = useState<Record<number, BillingDraft>>({});
-  const session = getSession();
-  const [stays, setStays] = useState<RoomStay[]>(
-    seedRooms
-      .filter((room) => room.status === 'Occupied' && room.guest && room.startDate && room.endDate)
-      .map((room) => ({
-        id: room.id * 1000,
-        roomId: room.id,
-        guest: room.guest!,
-        roomPrice: room.price,
-        advancePaid: 0,
-        startDate: room.startDate!,
-        endDate: room.endDate!,
-        checkedOut: false,
-      })),
-  );
+  const [session, setSession] = useState<LocalAuthSession | null | undefined>(undefined);
+  const [stays, setStays] = useState<RoomStay[]>([]);
 
   useEffect(() => {
+    setSession(getSession());
+  }, []);
+
+  const getDateKeyInTimeZone = (date: Date, timeZone: string) => {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(date);
+  };
+
+  const hotelTimeZone = session?.hotelProfile?.timezone || 'Asia/Kathmandu';
+  const todayPolicyDate = getDateKeyInTimeZone(new Date(), hotelTimeZone);
+
+  useEffect(() => {
+    if (session === undefined) {
+      return;
+    }
+
     if (!session) {
       router.replace('/login');
       return;
     }
 
     if (session.expiresAt && session.expiresAt * 1000 <= Date.now()) {
-        clearSession();
+      clearSession();
       router.replace('/login');
       return;
     }
 
-    if (!session.isApproved) {
-      router.replace('/pending-approval');
-    }
+    const initializeDashboard = async () => {
+      setIsRoomsLoading(true);
+
+      const authedSupabase = createAuthedSupabaseClient(session.accessToken);
+
+      const { data: hotelRow, error: hotelError } = await authedSupabase
+        .from('hotels')
+        .select('is_approved, hotel_name, room_count, room_names, check_in_time, check_out_time, timezone')
+        .eq('owner_id', session.userId)
+        .maybeSingle();
+
+      if (hotelError) {
+        console.error('Failed to load hotel profile:', hotelError.message);
+        setRooms([]);
+        setIsRoomsLoading(false);
+        return;
+      }
+
+      if (!hotelRow?.is_approved) {
+        saveSession({
+          ...session,
+          isApproved: false,
+        });
+        setIsRoomsLoading(false);
+        router.replace('/pending-approval');
+        return;
+      }
+
+      saveSession({
+        ...session,
+        isApproved: true,
+        hotelProfile: {
+          hotelName: hotelRow.hotel_name ?? session.hotelProfile?.hotelName ?? '',
+          roomCount: Number(hotelRow.room_count ?? session.hotelProfile?.roomCount ?? 0),
+          roomNames: hotelRow.room_names ?? session.hotelProfile?.roomNames ?? '',
+          checkInTime: hotelRow.check_in_time ?? session.hotelProfile?.checkInTime ?? '12:00',
+          checkOutTime: hotelRow.check_out_time ?? session.hotelProfile?.checkOutTime ?? '10:00',
+          timezone: hotelRow.timezone ?? session.hotelProfile?.timezone ?? 'Asia/Kathmandu',
+          roomMaster: session.hotelProfile?.roomMaster,
+        },
+      });
+
+      const { data, error } = await authedSupabase
+        .from('hotel_rooms')
+        .select('room_number, room_name, room_type, rate')
+        .eq('owner_id', session.userId)
+        .order('room_number', { ascending: true });
+
+      if (error) {
+        console.error('Failed to load room master:', error.message);
+        setRooms([]);
+        setIsRoomsLoading(false);
+        return;
+      }
+
+      const mappedRooms: Room[] = (data ?? []).map((row) => ({
+        id: Number(row.room_number),
+        roomName: row.room_name ?? `Room ${row.room_number}`,
+        roomType: row.room_type ?? 'Standard',
+        status: 'Available',
+        guest: null,
+        price: Number(row.rate ?? 1500),
+      }));
+
+      setRooms(mappedRooms);
+      setIsRoomsLoading(false);
+    };
+
+    void initializeDashboard();
   }, [router, session]);
 
-  if (!session || !session.isApproved) {
+  if (session === undefined || !session || !session.isApproved) {
     return (
       <div className="min-h-screen bg-slate-100 flex items-center justify-center">
         <p className="text-sm font-bold text-slate-500">Checking session...</p>
@@ -128,7 +202,7 @@ export default function NamasteDesk() {
         }),
     );
 
-    const isPastDate = startOfDay(date) < startOfDay(new Date());
+    const isPastDate = getDateKeyInTimeZone(date, hotelTimeZone) < todayPolicyDate;
     if (isPastDate && !stayForDate) {
       setIsBillingOpen(false);
       setIsCheckInOpen(false);
@@ -365,6 +439,10 @@ export default function NamasteDesk() {
     ? stays.find((stay) => stay.id === activeStayId) ?? null
     : null;
 
+  const activeRoom = activeRoomId
+    ? rooms.find((room) => room.id === activeRoomId) ?? null
+    : null;
+
   const availableRoomNumbersForSelectedDate = selectedDate
     ? rooms
         .filter((room) => {
@@ -389,11 +467,12 @@ export default function NamasteDesk() {
   const occupiedRoomIdsToday = new Set(
     stays
       .filter(
-        (stay) =>
-          isWithinInterval(startOfDay(new Date()), {
-            start: startOfDay(stay.startDate),
-            end: startOfDay(stay.endDate),
-          }) && !isSameDay(startOfDay(new Date()), startOfDay(stay.endDate)),
+        (stay) => {
+          const stayStart = getDateKeyInTimeZone(stay.startDate, hotelTimeZone);
+          const stayEnd = getDateKeyInTimeZone(stay.endDate, hotelTimeZone);
+
+          return todayPolicyDate >= stayStart && todayPolicyDate <= stayEnd && todayPolicyDate !== stayEnd;
+        },
       )
       .map((stay) => stay.roomId),
   );
@@ -451,12 +530,23 @@ export default function NamasteDesk() {
         </div>
 
         <div className="mb-8">
-          <CalendarDashboard
-            rooms={rooms}
-            stays={stays}
-            onCellClick={handleCellClick}
-            onCancelStay={handleCancelStay}
-          />
+          {isRoomsLoading ? (
+            <div className="bg-white rounded-3xl shadow-xl border border-slate-200 p-8 text-center">
+              <p className="text-sm font-bold text-slate-500">Loading your room master...</p>
+            </div>
+          ) : rooms.length === 0 ? (
+            <div className="bg-white rounded-3xl shadow-xl border border-slate-200 p-8 text-center">
+              <p className="text-base font-black text-slate-700">No room master found</p>
+              <p className="text-sm text-slate-500 mt-2">Please add room setup in your hotel profile to start check-ins.</p>
+            </div>
+          ) : (
+            <CalendarDashboard
+              rooms={rooms}
+              stays={stays}
+              onCellClick={handleCellClick}
+              onCancelStay={handleCancelStay}
+            />
+          )}
         </div>
 
         <div className="flex justify-center gap-8 text-xs font-bold text-slate-400 border-t pt-6">
@@ -477,6 +567,10 @@ export default function NamasteDesk() {
           roomNumber={activeRoomId}
           availableRoomNumbers={availableRoomNumbersForSelectedDate}
           initialDate={selectedDate}
+          defaultRoomPrice={activeRoom?.price ?? 1500}
+          defaultCheckInTime={session.hotelProfile?.checkInTime ?? '12:00'}
+          defaultCheckOutTime={session.hotelProfile?.checkOutTime ?? '10:00'}
+          minCheckInDate={todayPolicyDate}
           onClose={() => setIsCheckInOpen(false)}
           onSave={handleCheckInSave}
         />

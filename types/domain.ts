@@ -25,6 +25,8 @@ export interface Stay {
 
 export interface Room {
   id: number;
+  roomName?: string;
+  roomType?: string;
   status: RoomStatus;
   guest: Guest | null;
   price: number;

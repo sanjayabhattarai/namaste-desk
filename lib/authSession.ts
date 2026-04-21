@@ -1,5 +1,22 @@
 export const AUTH_STORAGE_KEY = 'namaste_desk_session';
 
+export interface HotelRoomMaster {
+  roomNumber: number;
+  roomName: string;
+  roomType: string;
+  rate: number;
+}
+
+export interface HotelProfile {
+  hotelName: string;
+  roomCount: number;
+  roomNames: string;
+  checkInTime: string;
+  checkOutTime: string;
+  timezone: string;
+  roomMaster?: HotelRoomMaster[];
+}
+
 export interface LocalAuthSession {
   accessToken: string;
   refreshToken: string;
@@ -7,6 +24,7 @@ export interface LocalAuthSession {
   email: string;
   expiresAt: number | null;
   isApproved: boolean;
+  hotelProfile?: HotelProfile;
 }
 
 export const saveSession = (session: LocalAuthSession) => {

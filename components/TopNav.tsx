@@ -3,11 +3,13 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { clearSession } from '@/lib/authSession';
+import { getSession } from '@/lib/authSession';
 import { supabase } from '@/lib/supabaseClient';
 
 export default function TopNav() {
   const router = useRouter();
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const session = getSession();
 
   const handleLogout = async () => {
     setIsLoggingOut(true);
@@ -24,7 +26,16 @@ export default function TopNav() {
           <div className="bg-white p-1 rounded-lg">
             <span className="text-emerald-900 font-black text-xl px-1">N</span>
           </div>
-          <h1 className="text-xl font-bold tracking-tight">Welcome to Namaste Desk</h1>
+          <div>
+            <h1 className="text-xl font-bold tracking-tight">
+              {session?.hotelProfile?.hotelName ?? 'Welcome to Namaste Desk'}
+            </h1>
+            {session?.hotelProfile ? (
+              <p className="text-xs text-emerald-100/80 font-medium">
+                {session.hotelProfile.roomCount} rooms • Check-in {session.hotelProfile.checkInTime} • Check-out {session.hotelProfile.checkOutTime}
+              </p>
+            ) : null}
+          </div>
         </div>
 
         <button

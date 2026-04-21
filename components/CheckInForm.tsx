@@ -1,6 +1,7 @@
 "use client"
-import React, { useState, useEffect } from 'react';
-import { X, User, Phone, Calendar, Camera, Users, Globe, Clock, Banknote, Mail, Briefcase, MapPin, Plane, TrainFront, FileText, StickyNote, BadgeHelp } from 'lucide-react';
+import React, { useState } from 'react';
+import Image from 'next/image';
+import { X, User, Phone, Calendar, Camera, Users, Globe, Clock, Mail, Briefcase, MapPin, Plane, TrainFront, FileText, StickyNote, BadgeHelp } from 'lucide-react';
 import { format, isValid } from 'date-fns';
 import { CheckInFormData } from '@/types/domain';
 
@@ -8,14 +9,17 @@ interface CheckInFormProps {
   roomNumber: number | string;
   availableRoomNumbers: number[];
   initialDate: Date | null;
+  defaultRoomPrice: number;
+  defaultCheckInTime: string;
+  defaultCheckOutTime: string;
+  minCheckInDate: string;
   onClose: () => void;
   onSave: (data: CheckInFormData) => void;
 }
 
-export default function CheckInForm({ roomNumber, availableRoomNumbers, initialDate, onClose, onSave }: CheckInFormProps) {
+export default function CheckInForm({ roomNumber, availableRoomNumbers, initialDate, defaultRoomPrice, defaultCheckInTime, defaultCheckOutTime, minCheckInDate, onClose, onSave }: CheckInFormProps) {
   // 1. Safety Check: If no date, use "Today"
   const safeDate = initialDate && isValid(initialDate) ? initialDate : new Date();
-  const todayMinDate = format(new Date(), 'yyyy-MM-dd');
 
   // Updated state to match a guest register card
   const [formData, setFormData] = useState<CheckInFormData>({
@@ -37,37 +41,16 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
     purposeOfVisit: 'Pleasure',
     agentName: '',
     remarks: '',
-    roomPrice: '1500',
+    roomPrice: String(defaultRoomPrice || 1500),
     rateCurrency: 'NPR',
     advancePaid: '0',
     totalGuests: '1',
     checkInDate: format(safeDate, 'yyyy-MM-dd'),
     checkOutDate: format(new Date(safeDate.getTime() + 86400000), 'yyyy-MM-dd'),
-    checkInTime: '12:00', // Default Check-in time
-    checkOutTime: '10:00', // Default Check-out time
+    checkInTime: defaultCheckInTime || '12:00',
+    checkOutTime: defaultCheckOutTime || '10:00',
     idPreview: null as string | null
   });
-
-  // 2. Update form if initialDate changes while open
-  useEffect(() => {
-    if (initialDate && isValid(initialDate)) {
-      setFormData(prev => ({
-        ...prev,
-        checkInDate: format(initialDate, 'yyyy-MM-dd'),
-        checkOutDate: format(new Date(initialDate.getTime() + 86400000), 'yyyy-MM-dd'),
-        roomNumber: String(roomNumber),
-        roomNumbers: [String(roomNumber)],
-      }));
-    }
-  }, [initialDate, roomNumber]);
-
-  useEffect(() => {
-    setFormData(prev => ({
-      ...prev,
-      roomNumber: String(roomNumber),
-      roomNumbers: prev.roomNumbers.length === 0 ? [String(roomNumber)] : prev.roomNumbers,
-    }));
-  }, [roomNumber]);
 
   const toggleRoomSelection = (roomId: number) => {
     const roomValue = String(roomId);
@@ -387,7 +370,7 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
                     <input
                       id="checkInDate"
                       type="date"
-                      min={todayMinDate}
+                      min={minCheckInDate}
                       title="Arrival date"
                       aria-label="Arrival date"
                       className="bg-transparent font-bold text-sm focus:outline-none w-full"
@@ -554,7 +537,7 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
               />
               <div className="border-2 border-dashed border-slate-200 rounded-2xl p-6 flex flex-col items-center justify-center bg-slate-50 group-hover:bg-emerald-50 group-hover:border-emerald-200 transition-all">
                 {formData.idPreview ? (
-                  <img src={formData.idPreview} alt="ID Preview" className="h-40 w-full object-cover rounded-lg shadow-md" />
+                  <Image src={formData.idPreview} alt="ID Preview" width={800} height={320} unoptimized className="h-40 w-full object-cover rounded-lg shadow-md" />
                 ) : (
                   <>
                     <div className="p-3 bg-white rounded-full shadow-sm mb-2 text-emerald-600">
