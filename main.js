@@ -1,5 +1,6 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
+const fs = require('fs/promises');
 const isDev = require('electron-is-dev');
 require('dotenv/config');
 const { PrismaClient } = require('@prisma/client');
@@ -10,6 +11,32 @@ const sqliteUrl = process.env.DATABASE_URL || `file:${path.join(__dirname, 'dev.
 const prisma = new PrismaClient({
   adapter: new PrismaBetterSqlite3({ url: sqliteUrl }),
 });
+
+const getFileExtensionFromMime = (mimeType, fallbackName = '') => {
+  const normalizedMimeType = String(mimeType || '').toLowerCase();
+
+  if (normalizedMimeType === 'image/jpeg') return '.jpg';
+  if (normalizedMimeType === 'image/png') return '.png';
+  if (normalizedMimeType === 'image/webp') return '.webp';
+  if (normalizedMimeType === 'image/gif') return '.gif';
+
+  const fallbackExt = path.extname(fallbackName || '').toLowerCase();
+  if (fallbackExt) return fallbackExt;
+
+  return '.jpg';
+};
+
+const parseDataUrl = (dataUrl) => {
+  const match = String(dataUrl || '').match(/^data:([^;]+);base64,(.+)$/);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    mimeType: match[1],
+    base64: match[2],
+  };
+};
 
 const mapRateCurrency = (currency) => {
   if (currency === 'US$') {
@@ -58,6 +85,7 @@ const toGuestSummary = (guest) => {
     checkInTime: guest.checkInTime,
     checkOutTime: guest.checkOutTime,
     idPreview: guest.idPreview,
+    idCardPath: guest.idCardPath,
     syncedToCloud: guest.syncedToCloud,
     createdAt: guest.createdAt,
     updatedAt: guest.updatedAt,
@@ -108,6 +136,29 @@ ipcMain.handle('save-guest', async (_event, formData) => {
       : [String(formData?.roomNumber ?? '').trim()].filter(Boolean),
   ));
 
+  const guestStayId = `${String(ownerId).replace(/[^a-zA-Z0-9_-]/g, '_')}-${String(Date.now())}`;
+
+  let storedIdCardPath = null;
+  const parsedDataUrl = parseDataUrl(formData?.idCardDataUrl);
+
+  if (parsedDataUrl?.base64) {
+    const userDataDir = app.getPath('userData');
+    const idCardDir = path.join(userDataDir, 'guest-id-cards', ownerId);
+    await fs.mkdir(idCardDir, { recursive: true });
+
+    const fileExtension = getFileExtensionFromMime(parsedDataUrl.mimeType, formData?.idCardFileName);
+    const fileName = `${guestStayId}${fileExtension}`;
+    const absoluteFilePath = path.join(idCardDir, fileName);
+
+    await fs.writeFile(absoluteFilePath, Buffer.from(parsedDataUrl.base64, 'base64'));
+    storedIdCardPath = absoluteFilePath;
+  } else {
+    const existingIdCardPath = String(formData?.existingIdCardPath ?? '').trim();
+    if (existingIdCardPath) {
+      storedIdCardPath = existingIdCardPath;
+    }
+  }
+
   const createdGuestStay = await prisma.$transaction(async (tx) => {
     const guest = await tx.guestStay.create({
       data: {
@@ -138,7 +189,8 @@ ipcMain.handle('save-guest', async (_event, formData) => {
         checkOutDate: String(formData?.checkOutDate ?? ''),
         checkInTime: String(formData?.checkInTime ?? ''),
         checkOutTime: String(formData?.checkOutTime ?? ''),
-        idPreview: formData?.idPreview || null,
+        idPreview: storedIdCardPath,
+        idCardPath: storedIdCardPath,
         syncedToCloud: false,
       },
     });
@@ -163,7 +215,7 @@ ipcMain.handle('save-guest', async (_event, formData) => {
     return guest;
   });
 
-  return { id: createdGuestStay.id };
+  return { id: createdGuestStay.id, idCardPath: storedIdCardPath };
 });
 
 ipcMain.handle('search-guests', async (_event, payload) => {
@@ -199,6 +251,8 @@ ipcMain.handle('search-guests', async (_event, payload) => {
     postalAddress: guest.postalAddress,
     phone: guest.phone,
     owner_id: guest.owner_id,
+    idPreview: guest.idPreview,
+    idCardPath: guest.idCardPath,
   };
 });
 

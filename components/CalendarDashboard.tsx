@@ -233,7 +233,22 @@ export default function CalendarDashboard({ rooms, stays, onCellClick, onCancelS
                           )}
                         </div>
                       ) : (
-                        <div className="h-full w-full hover:bg-emerald-50 rounded-lg transition-colors border-2 border-transparent hover:border-emerald-200 flex items-center justify-center text-transparent group-hover:text-emerald-400">
+                        <div
+                          role="button"
+                          tabIndex={0}
+                          aria-label={`Create check-in for room ${room.id} on ${format(day, 'MMM d, yyyy')}`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onCellClick(room.id, day, undefined, false);
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault();
+                              onCellClick(room.id, day, undefined, false);
+                            }
+                          }}
+                          className="h-full w-full hover:bg-emerald-50 rounded-lg transition-colors border-2 border-transparent hover:border-emerald-200 flex items-center justify-center text-transparent group-hover:text-emerald-400 cursor-pointer"
+                        >
                           <Plus size={16} />
                         </div>
                       )}

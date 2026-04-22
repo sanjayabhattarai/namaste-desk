@@ -30,6 +30,34 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
     postalAddress?: string | null;
     phone: string;
     owner_id: string;
+    idPreview?: string | null;
+    idCardPath?: string | null;
+  };
+
+  const toDisplayableIdCardSrc = (source?: string | null) => {
+    if (!source) {
+      return null;
+    }
+
+    if (/^blob:/i.test(source)) {
+      return null;
+    }
+
+    if (/^(data:|https?:|file:)/i.test(source)) {
+      return source;
+    }
+
+    const normalized = source.replace(/\\/g, '/');
+
+    if (/^[a-zA-Z]:\//.test(normalized)) {
+      return `file:///${normalized}`;
+    }
+
+    if (normalized.startsWith('/')) {
+      return `file://${normalized}`;
+    }
+
+    return source;
   };
 
   const createDefaultFormData = (): CheckInFormData => ({
@@ -60,14 +88,24 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
     checkInTime: defaultCheckInTime || '12:00',
     checkOutTime: defaultCheckOutTime || '10:00',
     idPreview: null,
+    idCardPath: null,
   });
 
   // Updated state to match a guest register card
   const [formData, setFormData] = useState<CheckInFormData>(createDefaultFormData());
+  const [idCardFile, setIdCardFile] = useState<File | null>(null);
+  const [isIdCardUploadMode, setIsIdCardUploadMode] = useState(true);
   const [saveStatus, setSaveStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [guestHistory, setGuestHistory] = useState<GuestHistoryResult | null>(null);
   const [isSearchingHistory, setIsSearchingHistory] = useState(false);
+
+  const readFileAsDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error ?? new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
 
   const toggleRoomSelection = (roomId: number) => {
     const roomValue = String(roomId);
@@ -89,7 +127,10 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      setFormData({ ...formData, idPreview: URL.createObjectURL(e.target.files[0]) });
+      const file = e.target.files[0];
+      setIdCardFile(file);
+      setFormData({ ...formData, idPreview: URL.createObjectURL(file), idCardPath: null });
+      setIsIdCardUploadMode(false);
     }
   };
 
@@ -147,7 +188,12 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
       profession: guestHistory.profession ?? prev.profession,
       postalAddress: guestHistory.postalAddress ?? prev.postalAddress,
       phone: guestHistory.phone ?? prev.phone,
+      idCardPath: guestHistory.idCardPath ?? prev.idCardPath ?? null,
+      idPreview: toDisplayableIdCardSrc(guestHistory.idCardPath ?? guestHistory.idPreview ?? prev.idPreview),
     }));
+
+    setIdCardFile(null);
+    setIsIdCardUploadMode(false);
 
     setGuestHistory(null);
   };
@@ -172,13 +218,20 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
     }
 
     try {
+      const idCardDataUrl = idCardFile ? await readFileAsDataUrl(idCardFile) : null;
       await window.electronAPI.saveGuest({
         ...formData,
         owner_id: userId,
+        idCardDataUrl,
+        idCardFileName: idCardFile?.name ?? null,
+        existingIdCardPath: idCardFile ? null : (formData.idCardPath ?? null),
+        idPreview: null,
       });
 
       setSaveStatus({ type: 'success', message: 'Namaste! Guest data saved securely on local disk.' });
       setFormData(createDefaultFormData());
+      setIdCardFile(null);
+      setIsIdCardUploadMode(true);
       onSave(formData);
     } catch (error) {
       console.error('Failed to save guest offline:', error);
@@ -660,16 +713,38 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
           <section>
             <label className="block text-sm font-bold text-slate-700 mb-2">ID Card / Document</label>
             <div className="relative group">
-              <input
-                type="file"
-                aria-label="Upload ID document"
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20"
-                onChange={handleFileChange}
-                accept="image/*"
-              />
+              {(isIdCardUploadMode || !formData.idPreview) ? (
+                <input
+                  type="file"
+                  aria-label="Upload ID document"
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20"
+                  onChange={handleFileChange}
+                  accept="image/*"
+                />
+              ) : null}
               <div className="border-2 border-dashed border-slate-200 rounded-2xl p-6 flex flex-col items-center justify-center bg-slate-50 group-hover:bg-emerald-50 group-hover:border-emerald-200 transition-all">
                 {formData.idPreview ? (
-                  <Image src={formData.idPreview} alt="ID Preview" width={800} height={320} unoptimized className="h-40 w-full object-cover rounded-lg shadow-md" />
+                  <>
+                    <img
+                      src={formData.idPreview}
+                      alt="ID Preview"
+                      className="h-40 w-full object-cover rounded-lg shadow-md"
+                      onError={() => {
+                        setFormData((prev) => ({ ...prev, idPreview: null, idCardPath: null }));
+                        setIdCardFile(null);
+                        setIsIdCardUploadMode(true);
+                      }}
+                    />
+                    <div className="mt-3 flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setIsIdCardUploadMode(true)}
+                        className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-200"
+                      >
+                        Replace ID Card
+                      </button>
+                    </div>
+                  </>
                 ) : (
                   <>
                     <div className="p-3 bg-white rounded-full shadow-sm mb-2 text-emerald-600">

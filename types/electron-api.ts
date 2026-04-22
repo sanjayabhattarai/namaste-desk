@@ -2,6 +2,8 @@ export {};
 
 interface OfflineGuestPayload {
   owner_id: string;
+  idCardDataUrl?: string | null;
+  idCardFileName?: string | null;
   [key: string]: unknown;
 }
 
@@ -18,6 +20,8 @@ interface GuestHistoryResult {
   postalAddress?: string | null;
   phone: string;
   owner_id: string;
+  idPreview?: string | null;
+  idCardPath?: string | null;
 }
 
 interface RoomStatusQueryPayload {

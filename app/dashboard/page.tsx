@@ -20,6 +20,27 @@ const EMPTY_BILLING_DRAFT: BillingDraft = {
 };
 
 const normalizePhone = (value: string) => value.replace(/[\s+\-()]/g, '');
+const toDisplayableIdCardSrc = (source?: string | null) => {
+  if (!source) {
+    return null;
+  }
+
+  if (/^(blob:|data:|https?:|file:)/i.test(source)) {
+    return source;
+  }
+
+  const normalized = source.replace(/\\/g, '/');
+
+  if (/^[a-zA-Z]:\//.test(normalized)) {
+    return `file:///${normalized}`;
+  }
+
+  if (normalized.startsWith('/')) {
+    return `file://${normalized}`;
+  }
+
+  return source;
+};
 
 export default function NamasteDesk() {
   const router = useRouter();
@@ -35,6 +56,7 @@ export default function NamasteDesk() {
   const [searchQuery, setSearchQuery] = useState('');
   const [showPastBill, setShowPastBill] = useState<Bill | null>(null);
   const [isGuestSummaryOpen, setIsGuestSummaryOpen] = useState(false);
+  const [idCardViewerSrc, setIdCardViewerSrc] = useState<string | null>(null);
   const [billingDraftsByStay, setBillingDraftsByStay] = useState<Record<number, BillingDraft>>({});
   const [session, setSession] = useState<LocalAuthSession | null | undefined>(undefined);
   const [stays, setStays] = useState<RoomStay[]>([]);
@@ -161,6 +183,7 @@ export default function NamasteDesk() {
                 nationality: guest.nationality,
                 totalGuests: Number(guest.totalGuests ?? 1),
                 idPreview: guest.idPreview ?? null,
+                idCardPath: guest.idCardPath ?? null,
                 profession: guest.profession ?? null,
                 postalAddress: guest.postalAddress ?? null,
               },
@@ -190,6 +213,7 @@ export default function NamasteDesk() {
                   nationality: activeGuest.nationality,
                   totalGuests: Number(activeGuest.totalGuests ?? 1),
                   idPreview: activeGuest.idPreview ?? null,
+                  idCardPath: activeGuest.idCardPath ?? null,
                   profession: activeGuest.profession ?? null,
                   postalAddress: activeGuest.postalAddress ?? null,
                 }
@@ -522,6 +546,9 @@ export default function NamasteDesk() {
     : null;
 
   const occupiedSummaryStay = isGuestSummaryOpen && activeStayData ? activeStayData : null;
+  const occupiedSummaryIdCardSrc = occupiedSummaryStay
+    ? toDisplayableIdCardSrc(occupiedSummaryStay.guest.idCardPath ?? occupiedSummaryStay.guest.idPreview ?? null)
+    : null;
 
   const availableRoomNumbersForSelectedDate = selectedDate
     ? rooms
@@ -732,6 +759,18 @@ export default function NamasteDesk() {
             <div className="mt-6 flex gap-3">
               <button
                 type="button"
+                disabled={!occupiedSummaryIdCardSrc}
+                onClick={() => {
+                  if (occupiedSummaryIdCardSrc) {
+                    setIdCardViewerSrc(occupiedSummaryIdCardSrc);
+                  }
+                }}
+                className="rounded-2xl bg-blue-100 px-4 py-3 font-black text-blue-700 hover:bg-blue-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                View ID Card
+              </button>
+              <button
+                type="button"
                 onClick={() => {
                   setIsGuestSummaryOpen(false);
                   setIsBillingOpen(true);
@@ -754,6 +793,26 @@ export default function NamasteDesk() {
 
       {showPastBill && (
         <PastReceiptModal bill={showPastBill} onClose={() => setShowPastBill(null)} />
+      )}
+
+      {idCardViewerSrc && (
+        <div className="fixed inset-0 bg-slate-900/75 backdrop-blur-sm flex items-center justify-center z-[120] p-4">
+          <div className="w-full max-w-3xl rounded-3xl bg-white shadow-2xl border border-slate-200 p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-lg font-black text-slate-800">Guest ID Card</h3>
+              <button
+                type="button"
+                onClick={() => setIdCardViewerSrc(null)}
+                className="rounded-full p-2 hover:bg-slate-100 text-slate-500"
+                aria-label="Close ID card viewer"
+                title="Close ID card viewer"
+              >
+                ×
+              </button>
+            </div>
+            <img src={idCardViewerSrc} alt="Guest ID Card" className="max-h-[75vh] w-full object-contain rounded-2xl bg-slate-50" />
+          </div>
+        </div>
       )}
     </div>
   );

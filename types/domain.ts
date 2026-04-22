@@ -11,6 +11,7 @@ export interface Guest {
   nationality: string;
   totalGuests: number;
   idPreview: string | null;
+  idCardPath?: string | null;
   profession?: string | null;
   postalAddress?: string | null;
 }
@@ -77,6 +78,7 @@ export interface LocalRoomStatusGuest {
   checkInTime: string;
   checkOutTime: string;
   idPreview?: string | null;
+  idCardPath?: string | null;
   syncedToCloud: boolean;
   createdAt: string;
   updatedAt: string;
@@ -151,4 +153,5 @@ export interface CheckInFormData {
   checkInTime: string;
   checkOutTime: string;
   idPreview: string | null;
+  idCardPath?: string | null;
 }

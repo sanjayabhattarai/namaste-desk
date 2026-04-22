@@ -47,6 +47,7 @@ model GuestStay {
   checkInTime       String
   checkOutTime      String
   idPreview         String?
+  idCardPath        String?
   syncedToCloud     Boolean      @default(false)
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
