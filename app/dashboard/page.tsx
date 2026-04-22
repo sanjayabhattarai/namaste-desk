@@ -1,7 +1,7 @@
 "use client"
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { addDays, isSameDay, isWithinInterval, startOfDay, subDays } from 'date-fns';
+import { addDays, format, isSameDay, isWithinInterval, startOfDay, subDays } from 'date-fns';
 import { Banknote, Users } from 'lucide-react';
 import CalendarDashboard from '@/components/CalendarDashboard';
 import CheckInForm from '@/components/CheckInForm';
@@ -11,7 +11,7 @@ import ReceiptSearchPanel from '@/components/ReceiptSearchPanel';
 import TopNav from '@/components/TopNav';
 import { clearSession, getSession, LocalAuthSession, saveSession } from '@/lib/authSession';
 import { createAuthedSupabaseClient } from '@/lib/supabaseClient';
-import { Bill, BillingDetails, BillingDraft, CheckInFormData, Room, RoomStay } from '@/types/domain';
+import { Bill, BillingDetails, BillingDraft, CheckInFormData, LocalRoomStatusSnapshot, Room, RoomStay } from '@/types/domain';
 
 const EMPTY_BILLING_DRAFT: BillingDraft = {
   foodItems: [],
@@ -34,6 +34,7 @@ export default function NamasteDesk() {
   const [pastReceipts, setPastReceipts] = useState<Bill[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [showPastBill, setShowPastBill] = useState<Bill | null>(null);
+  const [isGuestSummaryOpen, setIsGuestSummaryOpen] = useState(false);
   const [billingDraftsByStay, setBillingDraftsByStay] = useState<Record<number, BillingDraft>>({});
   const [session, setSession] = useState<LocalAuthSession | null | undefined>(undefined);
   const [stays, setStays] = useState<RoomStay[]>([]);
@@ -73,69 +74,138 @@ export default function NamasteDesk() {
     const initializeDashboard = async () => {
       setIsRoomsLoading(true);
 
-      const authedSupabase = createAuthedSupabaseClient(session.accessToken);
+      try {
+        const authedSupabase = createAuthedSupabaseClient(session.accessToken);
 
-      const { data: hotelRow, error: hotelError } = await authedSupabase
-        .from('hotels')
-        .select('is_approved, hotel_name, room_count, room_names, check_in_time, check_out_time, timezone')
-        .eq('owner_id', session.userId)
-        .maybeSingle();
+        const electronAPI = window.electronAPI;
+        const roomStatusPromise: Promise<LocalRoomStatusSnapshot[]> = electronAPI?.getRoomStatuses
+          ? electronAPI
+              .getRoomStatuses({ owner_id: session.userId })
+              .catch((error) => {
+                console.error('Failed to load local room statuses:', error);
+                return [];
+              })
+          : Promise.resolve([]);
 
-      if (hotelError) {
-        console.error('Failed to load hotel profile:', hotelError.message);
-        setRooms([]);
-        setIsRoomsLoading(false);
-        return;
-      }
+        const [hotelResult, roomResult, roomStatusResult] = await Promise.all([
+          authedSupabase
+            .from('hotels')
+            .select('is_approved, hotel_name, room_count, room_names, check_in_time, check_out_time, timezone')
+            .eq('owner_id', session.userId)
+            .maybeSingle(),
+          authedSupabase
+            .from('hotel_rooms')
+            .select('room_number, room_name, room_type, rate')
+            .eq('owner_id', session.userId)
+            .order('room_number', { ascending: true }),
+          roomStatusPromise,
+        ]);
 
-      if (!hotelRow?.is_approved) {
+        const { data: hotelRow, error: hotelError } = hotelResult;
+
+        if (hotelError) {
+          console.error('Failed to load hotel profile:', hotelError.message);
+          setRooms([]);
+          setIsRoomsLoading(false);
+          return;
+        }
+
+        if (!hotelRow?.is_approved) {
+          saveSession({
+            ...session,
+            isApproved: false,
+          });
+          setIsRoomsLoading(false);
+          router.replace('/pending-approval');
+          return;
+        }
+
         saveSession({
           ...session,
-          isApproved: false,
+          isApproved: true,
+          hotelProfile: {
+            hotelName: hotelRow.hotel_name ?? session.hotelProfile?.hotelName ?? '',
+            roomCount: Number(hotelRow.room_count ?? session.hotelProfile?.roomCount ?? 0),
+            roomNames: hotelRow.room_names ?? session.hotelProfile?.roomNames ?? '',
+            checkInTime: hotelRow.check_in_time ?? session.hotelProfile?.checkInTime ?? '12:00',
+            checkOutTime: hotelRow.check_out_time ?? session.hotelProfile?.checkOutTime ?? '10:00',
+            timezone: hotelRow.timezone ?? session.hotelProfile?.timezone ?? 'Asia/Kathmandu',
+            roomMaster: session.hotelProfile?.roomMaster,
+          },
         });
+
+        const { data, error } = roomResult;
+
+        if (error) {
+          console.error('Failed to load room master:', error.message);
+          setRooms([]);
+          setIsRoomsLoading(false);
+          return;
+        }
+
+        const roomStatusByNumber = new Map(
+          (roomStatusResult ?? []).map((snapshot) => [String(snapshot.roomNumber), snapshot]),
+        );
+
+        const loadedStays: RoomStay[] = (roomStatusResult ?? [])
+          .filter((snapshot) => snapshot.currentGuestStay)
+          .map((snapshot, index) => {
+            const guest = snapshot.currentGuestStay!;
+
+            return {
+              id: Number(new Date(guest.createdAt).getTime()) + index,
+              roomId: Number(snapshot.roomNumber),
+              guest: {
+                name: guest.guestName,
+                phone: guest.phone,
+                nationality: guest.nationality,
+                totalGuests: Number(guest.totalGuests ?? 1),
+                idPreview: guest.idPreview ?? null,
+                profession: guest.profession ?? null,
+                postalAddress: guest.postalAddress ?? null,
+              },
+              roomPrice: Number(guest.roomPrice ?? 1500),
+              advancePaid: Number(guest.advancePaid ?? 0),
+              startDate: new Date(guest.checkInDate),
+              endDate: new Date(guest.checkOutDate),
+              checkedOut: false,
+            };
+          });
+
+        setStays(loadedStays);
+
+        const mappedRooms: Room[] = (data ?? []).map((row: { room_number: number | string; room_name?: string | null; room_type?: string | null; rate?: number | string | null }) => {
+          const snapshot = roomStatusByNumber.get(String(row.room_number));
+          const activeGuest = snapshot?.currentGuestStay;
+
+          return {
+            id: Number(row.room_number),
+            roomName: row.room_name ?? `Room ${row.room_number}`,
+            roomType: row.room_type ?? 'Standard',
+            status: activeGuest ? 'Occupied' : 'Available',
+            guest: activeGuest
+              ? {
+                  name: activeGuest.guestName,
+                  phone: activeGuest.phone,
+                  nationality: activeGuest.nationality,
+                  totalGuests: Number(activeGuest.totalGuests ?? 1),
+                  idPreview: activeGuest.idPreview ?? null,
+                  profession: activeGuest.profession ?? null,
+                  postalAddress: activeGuest.postalAddress ?? null,
+                }
+              : null,
+            price: Number(row.rate ?? 1500),
+          };
+        });
+
+        setRooms(mappedRooms);
         setIsRoomsLoading(false);
-        router.replace('/pending-approval');
-        return;
-      }
-
-      saveSession({
-        ...session,
-        isApproved: true,
-        hotelProfile: {
-          hotelName: hotelRow.hotel_name ?? session.hotelProfile?.hotelName ?? '',
-          roomCount: Number(hotelRow.room_count ?? session.hotelProfile?.roomCount ?? 0),
-          roomNames: hotelRow.room_names ?? session.hotelProfile?.roomNames ?? '',
-          checkInTime: hotelRow.check_in_time ?? session.hotelProfile?.checkInTime ?? '12:00',
-          checkOutTime: hotelRow.check_out_time ?? session.hotelProfile?.checkOutTime ?? '10:00',
-          timezone: hotelRow.timezone ?? session.hotelProfile?.timezone ?? 'Asia/Kathmandu',
-          roomMaster: session.hotelProfile?.roomMaster,
-        },
-      });
-
-      const { data, error } = await authedSupabase
-        .from('hotel_rooms')
-        .select('room_number, room_name, room_type, rate')
-        .eq('owner_id', session.userId)
-        .order('room_number', { ascending: true });
-
-      if (error) {
-        console.error('Failed to load room master:', error.message);
+      } catch (error) {
+        console.error('Failed to initialize dashboard:', error);
         setRooms([]);
+        setStays([]);
         setIsRoomsLoading(false);
-        return;
       }
-
-      const mappedRooms: Room[] = (data ?? []).map((row) => ({
-        id: Number(row.room_number),
-        roomName: row.room_name ?? `Room ${row.room_number}`,
-        roomType: row.room_type ?? 'Standard',
-        status: 'Available',
-        guest: null,
-        price: Number(row.rate ?? 1500),
-      }));
-
-      setRooms(mappedRooms);
-      setIsRoomsLoading(false);
     };
 
     void initializeDashboard();
@@ -171,6 +241,16 @@ export default function NamasteDesk() {
     if (stayId) {
       const explicitStay = stays.find((stay) => stay.id === stayId);
       if (!explicitStay) {
+        return;
+      }
+
+      if (!forceBilling) {
+        setActiveRoomId(roomId);
+        setActiveStayId(explicitStay.id);
+        setSelectedDate(date);
+        setIsGuestSummaryOpen(true);
+        setIsBillingOpen(false);
+        setIsCheckInOpen(false);
         return;
       }
 
@@ -337,17 +417,14 @@ export default function NamasteDesk() {
 
     setPastReceipts((prev) => [newReceipt, ...prev]);
     setShowPastBill(newReceipt);
-    setStays((prev) =>
-      prev.map((stay) =>
-        stay.id === activeStayId
-          ? {
-              ...stay,
-              checkedOut: true,
-              receiptId,
-            }
-          : stay,
-      ),
-    );
+    setStays((prev) => prev.filter((stay) => stay.id !== activeStayId));
+
+    if (window.electronAPI?.releaseRoomStatus && session?.userId && activeRoomId) {
+      void window.electronAPI.releaseRoomStatus({
+        owner_id: session.userId,
+        roomNumber: String(activeRoomId),
+      });
+    }
 
     setTotalSales((prev) => prev + finalAmount);
     setBillingDraftsByStay((prev) => {
@@ -356,6 +433,7 @@ export default function NamasteDesk() {
       return next;
     });
     setIsBillingOpen(false);
+    setIsGuestSummaryOpen(false);
     setActiveRoomId(null);
     setActiveStayId(null);
     setSelectedDate(null);
@@ -442,6 +520,8 @@ export default function NamasteDesk() {
   const activeRoom = activeRoomId
     ? rooms.find((room) => room.id === activeRoomId) ?? null
     : null;
+
+  const occupiedSummaryStay = isGuestSummaryOpen && activeStayData ? activeStayData : null;
 
   const availableRoomNumbersForSelectedDate = selectedDate
     ? rooms
@@ -593,6 +673,83 @@ export default function NamasteDesk() {
           onClose={() => setIsBillingOpen(false)}
           onCheckout={handleCheckoutComplete}
         />
+      )}
+
+      {occupiedSummaryStay && activeRoom && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[110] p-4">
+          <div className="w-full max-w-lg rounded-3xl bg-white shadow-2xl border border-slate-200 p-6">
+            <div className="flex items-start justify-between gap-4 mb-4">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.2em] text-rose-600">Occupied Room</p>
+                <h3 className="text-2xl font-black text-slate-800">Room {activeRoom.id}</h3>
+                <p className="text-sm text-slate-500">Current guest details from local SQLite</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsGuestSummaryOpen(false)}
+                className="rounded-full p-2 hover:bg-slate-100 text-slate-500"
+                aria-label="Close room summary"
+                title="Close room summary"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="space-y-3 text-sm">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-2xl bg-slate-50 p-3">
+                  <p className="text-xs font-bold text-slate-400 uppercase">Guest</p>
+                  <p className="font-black text-slate-800">{occupiedSummaryStay.guest.name}</p>
+                </div>
+                <div className="rounded-2xl bg-slate-50 p-3">
+                  <p className="text-xs font-bold text-slate-400 uppercase">Phone</p>
+                  <p className="font-black text-slate-800">{occupiedSummaryStay.guest.phone}</p>
+                </div>
+                <div className="rounded-2xl bg-slate-50 p-3">
+                  <p className="text-xs font-bold text-slate-400 uppercase">Nationality</p>
+                  <p className="font-black text-slate-800">{occupiedSummaryStay.guest.nationality}</p>
+                </div>
+                <div className="rounded-2xl bg-slate-50 p-3">
+                  <p className="text-xs font-bold text-slate-400 uppercase">Persons</p>
+                  <p className="font-black text-slate-800">{occupiedSummaryStay.guest.totalGuests}</p>
+                </div>
+              </div>
+
+              <div className="rounded-2xl bg-slate-50 p-3">
+                <p className="text-xs font-bold text-slate-400 uppercase">Stay Period</p>
+                <p className="font-black text-slate-800">
+                  {format(occupiedSummaryStay.startDate, 'MMM d, yyyy')} → {format(occupiedSummaryStay.endDate, 'MMM d, yyyy')}
+                </p>
+              </div>
+
+              <div className="rounded-2xl bg-slate-50 p-3">
+                <p className="text-xs font-bold text-slate-400 uppercase">Address / Profession</p>
+                <p className="font-black text-slate-800">{occupiedSummaryStay.guest.postalAddress || 'No address saved'}</p>
+                <p className="text-slate-600">{occupiedSummaryStay.guest.profession || 'No profession saved'}</p>
+              </div>
+            </div>
+
+            <div className="mt-6 flex gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsGuestSummaryOpen(false);
+                  setIsBillingOpen(true);
+                }}
+                className="flex-1 rounded-2xl bg-emerald-700 px-4 py-3 font-black text-white hover:bg-emerald-800"
+              >
+                Checkout/Billing
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsGuestSummaryOpen(false)}
+                className="rounded-2xl bg-slate-100 px-4 py-3 font-black text-slate-700 hover:bg-slate-200"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {showPastBill && (

@@ -11,6 +11,8 @@ export interface Guest {
   nationality: string;
   totalGuests: number;
   idPreview: string | null;
+  profession?: string | null;
+  postalAddress?: string | null;
 }
 
 export interface Stay {
@@ -44,6 +46,50 @@ export interface RoomStay {
   endDate: Date;
   checkedOut: boolean;
   receiptId?: number;
+}
+
+export interface LocalRoomStatusGuest {
+  id: string;
+  owner_id: string;
+  isGroupEntry: boolean;
+  roomNumber: string;
+  roomNumbers: string[];
+  guestName: string;
+  profession?: string | null;
+  postalAddress?: string | null;
+  phone: string;
+  email?: string | null;
+  nationality: string;
+  passportNumber?: string | null;
+  citizenshipNumber?: string | null;
+  entryPoint?: string | null;
+  arrivedFrom?: string | null;
+  departureTo?: string | null;
+  modeOfTravel?: string | null;
+  purposeOfVisit?: string | null;
+  agentName?: string | null;
+  remarks?: string | null;
+  roomPrice: string;
+  advancePaid: string;
+  totalGuests: string;
+  checkInDate: string;
+  checkOutDate: string;
+  checkInTime: string;
+  checkOutTime: string;
+  idPreview?: string | null;
+  syncedToCloud: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LocalRoomStatusSnapshot {
+  id: string;
+  owner_id: string;
+  roomNumber: string;
+  currentGuestStayId: string | null;
+  currentGuestStay: LocalRoomStatusGuest | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface Bill {

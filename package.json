@@ -5,12 +5,16 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "rebuild:electron": "electron-rebuild -f -w better-sqlite3",
+    "predev:desktop": "npm run rebuild:electron",
     "dev:desktop": "concurrently -k \"next dev\" \"wait-on tcp:3000 && electron .\"",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
   },
   "dependencies": {
+    "@prisma/adapter-better-sqlite3": "^7.7.0",
+    "@prisma/client": "^7.7.0",
     "@supabase/supabase-js": "^2.104.0",
     "date-fns": "^4.1.0",
     "electron-is-dev": "^3.0.1",
@@ -26,10 +30,13 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "concurrently": "^9.2.1",
+    "dotenv": "^17.4.2",
     "electron": "^41.2.1",
     "electron-builder": "^26.8.1",
+    "electron-rebuild": "^3.2.9",
     "eslint": "^9",
     "eslint-config-next": "16.2.2",
+    "prisma": "^7.7.0",
     "tailwindcss": "^4",
     "typescript": "^5",
     "wait-on": "^9.0.5"

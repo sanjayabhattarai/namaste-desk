@@ -128,7 +128,15 @@ export default function CalendarDashboard({ rooms, stays, onCellClick, onCancelS
                       className="p-2 border-b border-r h-24 cursor-pointer group relative"
                     >
                       {isFullyBlocked ? (
-                        <div className="bg-rose-600 text-white p-2 rounded-lg text-xs font-bold shadow-md h-full flex flex-col justify-center transition-all group-hover:bg-rose-700 border-2 border-rose-400">
+                        <div
+                          className="bg-rose-600 text-white p-2 rounded-lg text-xs font-bold shadow-md h-full flex flex-col justify-center transition-all group-hover:bg-rose-700 border-2 border-rose-400"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            if (activeStay) {
+                              onCellClick(room.id, day, activeStay.id, false);
+                            }
+                          }}
+                        >
                           <div className="flex justify-between items-start">
                             <User size={12} />
                             {!activeStay?.checkedOut && (
@@ -148,7 +156,7 @@ export default function CalendarDashboard({ rooms, stays, onCellClick, onCancelS
                             )}
                           </div>
                           <span className="truncate mt-1 uppercase tracking-tighter">{activeStay?.guest.name}</span>
-                          <span className="text-[8px] mt-1 opacity-70 group-hover:opacity-100">Click to add items</span>
+                            <span className="text-[8px] mt-1 opacity-70 group-hover:opacity-100">Click to view guest</span>
                         </div>
                       ) : isCheckOutDay ? (
                         <div className="h-full w-full flex flex-col gap-1">

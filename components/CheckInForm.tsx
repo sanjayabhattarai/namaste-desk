@@ -1,9 +1,10 @@
 "use client"
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Image from 'next/image';
 import { X, User, Phone, Calendar, Camera, Users, Globe, Clock, Mail, Briefcase, MapPin, Plane, TrainFront, FileText, StickyNote, BadgeHelp } from 'lucide-react';
 import { format, isValid } from 'date-fns';
 import { CheckInFormData } from '@/types/domain';
+import { supabase } from '@/lib/supabaseClient';
 
 interface CheckInFormProps {
   roomNumber: number | string;
@@ -21,8 +22,17 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
   // 1. Safety Check: If no date, use "Today"
   const safeDate = initialDate && isValid(initialDate) ? initialDate : new Date();
 
-  // Updated state to match a guest register card
-  const [formData, setFormData] = useState<CheckInFormData>({
+  type GuestHistoryResult = {
+    id: string;
+    guestName: string;
+    nationality: string;
+    profession?: string | null;
+    postalAddress?: string | null;
+    phone: string;
+    owner_id: string;
+  };
+
+  const createDefaultFormData = (): CheckInFormData => ({
     isGroupEntry: false,
     roomNumber: String(roomNumber),
     roomNumbers: [String(roomNumber)],
@@ -49,8 +59,15 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
     checkOutDate: format(new Date(safeDate.getTime() + 86400000), 'yyyy-MM-dd'),
     checkInTime: defaultCheckInTime || '12:00',
     checkOutTime: defaultCheckOutTime || '10:00',
-    idPreview: null as string | null
+    idPreview: null,
   });
+
+  // Updated state to match a guest register card
+  const [formData, setFormData] = useState<CheckInFormData>(createDefaultFormData());
+  const [saveStatus, setSaveStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [guestHistory, setGuestHistory] = useState<GuestHistoryResult | null>(null);
+  const [isSearchingHistory, setIsSearchingHistory] = useState(false);
 
   const toggleRoomSelection = (roomId: number) => {
     const roomValue = String(roomId);
@@ -76,9 +93,104 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  useEffect(() => {
+    const phoneQuery = formData.phone.trim();
+    const electronAPI = window.electronAPI;
+
+    if (!phoneQuery || !electronAPI?.searchGuests) {
+      setGuestHistory(null);
+      setIsSearchingHistory(false);
+      return;
+    }
+
+    const timeoutId = window.setTimeout(async () => {
+      const { data: activeSessionData } = await supabase.auth.getSession();
+      const userId = activeSessionData.session?.user?.id;
+
+      if (!userId) {
+        setGuestHistory(null);
+        setIsSearchingHistory(false);
+        return;
+      }
+
+      setIsSearchingHistory(true);
+
+      try {
+        const result = await electronAPI.searchGuests({
+          owner_id: userId,
+          phone: phoneQuery,
+        });
+
+        setGuestHistory(result);
+      } catch (error) {
+        console.error('Failed to search guest history:', error);
+        setGuestHistory(null);
+      } finally {
+        setIsSearchingHistory(false);
+      }
+    }, 500);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [formData.phone]);
+
+  const applyGuestHistory = () => {
+    if (!guestHistory) {
+      return;
+    }
+
+    setFormData((prev) => ({
+      ...prev,
+      guestName: guestHistory.guestName ?? prev.guestName,
+      nationality: guestHistory.nationality ?? prev.nationality,
+      profession: guestHistory.profession ?? prev.profession,
+      postalAddress: guestHistory.postalAddress ?? prev.postalAddress,
+      phone: guestHistory.phone ?? prev.phone,
+    }));
+
+    setGuestHistory(null);
+  };
+
+  const submitGuest = async () => {
+    setIsSaving(true);
+    setSaveStatus(null);
+
+    const { data: activeSessionData } = await supabase.auth.getSession();
+    const userId = activeSessionData.session?.user?.id;
+
+    if (!userId) {
+      setSaveStatus({ type: 'error', message: 'Could not verify active session. Local save was not completed.' });
+      setIsSaving(false);
+      return;
+    }
+
+    if (!window.electronAPI?.saveGuest) {
+      setSaveStatus({ type: 'error', message: 'Desktop bridge unavailable. Please run inside Electron.' });
+      setIsSaving(false);
+      return;
+    }
+
+    try {
+      await window.electronAPI.saveGuest({
+        ...formData,
+        owner_id: userId,
+      });
+
+      setSaveStatus({ type: 'success', message: 'Namaste! Guest data saved securely on local disk.' });
+      setFormData(createDefaultFormData());
+      onSave(formData);
+    } catch (error) {
+      console.error('Failed to save guest offline:', error);
+      setSaveStatus({ type: 'error', message: 'Local save failed (disk/database issue). Data is not backed up locally.' });
+    }
+
+    setIsSaving(false);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    onSave(formData);
+    await submitGuest();
   };
 
   return (
@@ -177,10 +289,30 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
                     placeholder="98..."
                     className="w-full pl-10 pr-4 py-3.5 border-2 border-slate-100 rounded-xl focus:border-emerald-500 outline-none font-medium bg-white"
                     value={formData.phone}
-                    onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                    onChange={(e) => {
+                      setFormData({ ...formData, phone: e.target.value });
+                      setGuestHistory(null);
+                    }}
                     required
                   />
                 </div>
+                {isSearchingHistory ? (
+                  <p className="mt-2 text-xs font-bold text-slate-500">Searching guest history...</p>
+                ) : null}
+                {guestHistory ? (
+                  <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 flex items-center justify-between gap-3">
+                    <p className="text-xs font-bold text-amber-800">
+                      Returning guest found for this phone number.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={applyGuestHistory}
+                      className="rounded-lg bg-amber-600 px-3 py-2 text-xs font-black text-white hover:bg-amber-700"
+                    >
+                      Fill from History
+                    </button>
+                  </div>
+                ) : null}
               </div>
 
               <div>
@@ -553,11 +685,18 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
 
         {/* Sticky Footer Button */}
         <div className="p-6 border-t bg-white sticky bottom-0">
+          {saveStatus ? (
+            <p className={`mb-3 rounded-xl px-4 py-2 text-sm font-bold ${saveStatus.type === 'success' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-rose-50 text-rose-700 border border-rose-200'}`}>
+              {saveStatus.message}
+            </p>
+          ) : null}
           <button 
-            onClick={handleSubmit}
+            type="button"
+            onClick={() => void submitGuest()}
+            disabled={isSaving}
             className="w-full py-4 bg-emerald-800 text-white rounded-2xl font-black text-lg shadow-xl shadow-emerald-100 hover:bg-emerald-900 active:scale-95 transition-all flex items-center justify-center gap-2"
           >
-            Check-in Guest
+            {isSaving ? 'Saving...' : 'Check-in Guest'}
           </button>
         </div>
       </div>

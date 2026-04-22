@@ -1,0 +1,67 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+enum RateCurrency {
+  NPR
+  INR
+  USD
+}
+
+model GuestStay {
+  id                String       @id @default(cuid())
+  owner_id          String
+  isGroupEntry      Boolean      @default(false)
+  roomNumber        String
+  roomNumbers       Json
+  guestName         String
+  profession        String?
+  postalAddress     String?
+  phone             String
+  email             String?
+  nationality       String
+  passportNumber    String?
+  citizenshipNumber String?
+  entryPoint        String?
+  arrivedFrom       String?
+  departureTo       String?
+  modeOfTravel      String?
+  purposeOfVisit    String?
+  agentName         String?
+  remarks           String?
+  roomPrice         String
+  rateCurrency      RateCurrency @default(NPR)
+  advancePaid       String       @default("0")
+  totalGuests       String       @default("1")
+  checkInDate       String
+  checkOutDate      String
+  checkInTime       String
+  checkOutTime      String
+  idPreview         String?
+  syncedToCloud     Boolean      @default(false)
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  roomStatuses      RoomStatus[]
+}
+
+model RoomStatus {
+  id                 String     @id @default(cuid())
+  owner_id           String
+  roomNumber         String
+  currentGuestStayId  String?
+  currentGuestStay   GuestStay? @relation(fields: [currentGuestStayId], references: [id], onDelete: SetNull)
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+
+  @@unique([owner_id, roomNumber])
+  @@index([owner_id])
+}
