@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { Settings } from 'lucide-react';
 import { clearSession } from '@/lib/authSession';
 import { getSession } from '@/lib/authSession';
 import { supabase } from '@/lib/supabaseClient';
@@ -38,14 +39,23 @@ export default function TopNav() {
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={handleLogout}
-          disabled={isLoggingOut}
-          className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-60 text-sm font-bold transition-colors"
-        >
-          {isLoggingOut ? 'Logging out...' : 'Logout'}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => router.push('/settings')}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-sm font-bold transition-colors"
+          >
+            <Settings size={16} /> Settings
+          </button>
+          <button
+            type="button"
+            onClick={handleLogout}
+            disabled={isLoggingOut}
+            className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-60 text-sm font-bold transition-colors"
+          >
+            {isLoggingOut ? 'Logging out...' : 'Logout'}
+          </button>
+        </div>
       </div>
     </nav>
   );

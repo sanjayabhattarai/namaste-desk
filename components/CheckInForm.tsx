@@ -34,6 +34,20 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
     idCardPath?: string | null;
   };
 
+  type GuestHistoryListItem = {
+    id: string;
+    guestName: string;
+    phone: string;
+    roomNumber: string;
+    nationality: string;
+    checkInDate: string;
+    checkOutDate: string;
+    profession?: string | null;
+    postalAddress?: string | null;
+    idCardPath?: string | null;
+    idPreview?: string | null;
+  };
+
   const toDisplayableIdCardSrc = (source?: string | null) => {
     if (!source) {
       return null;
@@ -97,7 +111,7 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
   const [isIdCardUploadMode, setIsIdCardUploadMode] = useState(true);
   const [saveStatus, setSaveStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  const [guestHistory, setGuestHistory] = useState<GuestHistoryResult | null>(null);
+  const [guestHistoryList, setGuestHistoryList] = useState<GuestHistoryListItem[]>([]);
   const [isSearchingHistory, setIsSearchingHistory] = useState(false);
 
   const readFileAsDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
@@ -138,8 +152,8 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
     const phoneQuery = formData.phone.trim();
     const electronAPI = window.electronAPI;
 
-    if (!phoneQuery || !electronAPI?.searchGuests) {
-      setGuestHistory(null);
+    if (phoneQuery.length < 4 || !electronAPI?.searchGuestsList) {
+      setGuestHistoryList([]);
       setIsSearchingHistory(false);
       return;
     }
@@ -149,7 +163,7 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
       const userId = activeSessionData.session?.user?.id;
 
       if (!userId) {
-        setGuestHistory(null);
+        setGuestHistoryList([]);
         setIsSearchingHistory(false);
         return;
       }
@@ -157,15 +171,15 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
       setIsSearchingHistory(true);
 
       try {
-        const result = await electronAPI.searchGuests({
+        const results = await electronAPI.searchGuestsList({
           owner_id: userId,
-          phone: phoneQuery,
+          query: phoneQuery,
         });
 
-        setGuestHistory(result);
+        setGuestHistoryList(results);
       } catch (error) {
         console.error('Failed to search guest history:', error);
-        setGuestHistory(null);
+        setGuestHistoryList([]);
       } finally {
         setIsSearchingHistory(false);
       }
@@ -176,7 +190,7 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
     };
   }, [formData.phone]);
 
-  const applyGuestHistory = () => {
+  const applyGuestHistory = (guestHistory: GuestHistoryListItem) => {
     if (!guestHistory) {
       return;
     }
@@ -195,12 +209,34 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
     setIdCardFile(null);
     setIsIdCardUploadMode(false);
 
-    setGuestHistory(null);
+    setGuestHistoryList([]);
   };
 
   const submitGuest = async () => {
     setIsSaving(true);
     setSaveStatus(null);
+
+    const guestName = formData.guestName.trim();
+    const phone = formData.phone.trim();
+    const hasIdCard = Boolean(idCardFile || formData.idPreview || formData.idCardPath);
+
+    if (!guestName) {
+      setSaveStatus({ type: 'error', message: 'Check-in unsuccessful: Guest name is required.' });
+      setIsSaving(false);
+      return;
+    }
+
+    if (!phone) {
+      setSaveStatus({ type: 'error', message: 'Check-in unsuccessful: Mobile number is required.' });
+      setIsSaving(false);
+      return;
+    }
+
+    if (!hasIdCard) {
+      setSaveStatus({ type: 'error', message: 'Check-in unsuccessful: ID card is required.' });
+      setIsSaving(false);
+      return;
+    }
 
     const { data: activeSessionData } = await supabase.auth.getSession();
     const userId = activeSessionData.session?.user?.id;
@@ -287,7 +323,7 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="md:col-span-2">
-                <label htmlFor="guestName" className="block text-sm font-bold text-slate-700 mb-1">Full Name (M/S/MR/MRS/MISS)</label>
+                <label htmlFor="guestName" className="block text-sm font-bold text-slate-700 mb-1">Full Name (M/S/MR/MRS/MISS) <span className="text-rose-500">*</span></label>
                 <div className="relative">
                   <User className="absolute left-3 top-3.5 text-slate-400" size={18} />
                   <input
@@ -356,26 +392,41 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
                     value={formData.phone}
                     onChange={(e) => {
                       setFormData({ ...formData, phone: e.target.value });
-                      setGuestHistory(null);
+                      setGuestHistoryList([]);
                     }}
                     required
                   />
                 </div>
+                {formData.phone.trim().length > 0 && formData.phone.trim().length < 4 ? (
+                  <p className="mt-2 text-xs font-bold text-slate-500">Type at least 4 digits to see matching guest history.</p>
+                ) : null}
                 {isSearchingHistory ? (
                   <p className="mt-2 text-xs font-bold text-slate-500">Searching guest history...</p>
                 ) : null}
-                {guestHistory ? (
-                  <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 flex items-center justify-between gap-3">
+                {guestHistoryList.length > 0 ? (
+                  <div className="mt-3 space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3">
                     <p className="text-xs font-bold text-amber-800">
-                      Returning guest found for this phone number.
+                      Matching guests for this phone number:
                     </p>
-                    <button
-                      type="button"
-                      onClick={applyGuestHistory}
-                      className="rounded-lg bg-amber-600 px-3 py-2 text-xs font-black text-white hover:bg-amber-700"
-                    >
-                      Fill from History
-                    </button>
+                    <div className="max-h-48 space-y-2 overflow-y-auto pr-1">
+                      {guestHistoryList.map((guest) => (
+                        <div key={guest.id} className="flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-white p-2">
+                          <div className="min-w-0">
+                            <p className="truncate text-xs font-black text-slate-800">{guest.guestName}</p>
+                            <p className="text-[11px] font-medium text-slate-600">
+                              Room {guest.roomNumber} • {guest.checkInDate} to {guest.checkOutDate}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => applyGuestHistory(guest)}
+                            className="shrink-0 rounded-lg bg-amber-600 px-3 py-2 text-xs font-black text-white hover:bg-amber-700"
+                          >
+                            Fill
+                          </button>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 ) : null}
               </div>
@@ -723,7 +774,7 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
           </section>
 
           <section>
-            <label className="block text-sm font-bold text-slate-700 mb-2">ID Card / Document</label>
+            <label className="block text-sm font-bold text-slate-700 mb-2">ID Card / Document <span className="text-rose-500">*</span></label>
             <div className="relative group">
               {(isIdCardUploadMode || !formData.idPreview) ? (
                 <input
@@ -732,6 +783,7 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
                   className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20"
                   onChange={handleFileChange}
                   accept="image/*"
+                  required={!formData.idPreview && !formData.idCardPath}
                 />
               ) : null}
               <div className="border-2 border-dashed border-slate-200 rounded-2xl p-6 flex flex-col items-center justify-center bg-slate-50 group-hover:bg-emerald-50 group-hover:border-emerald-200 transition-all">
