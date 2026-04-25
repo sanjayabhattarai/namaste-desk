@@ -12,6 +12,24 @@ interface GuestHistoryPayload {
   phone: string;
 }
 
+interface GuestSearchListPayload {
+  owner_id: string;
+  query: string;
+}
+
+interface GuestSearchListItem {
+  id: string;
+  guestName: string;
+  phone: string;
+  roomNumber: string;
+  nationality: string;
+  checkInDate: string;
+  checkOutDate: string;
+  idCardPath?: string | null;
+  idPreview?: string | null;
+  createdAt: string;
+}
+
 interface GuestHistoryResult {
   id: string;
   guestName: string;
@@ -25,6 +43,10 @@ interface GuestHistoryResult {
 }
 
 interface RoomStatusQueryPayload {
+  owner_id: string;
+}
+
+interface GuestStayQueryPayload {
   owner_id: string;
 }
 
@@ -62,6 +84,7 @@ interface RoomStatusGuestRecord {
   checkInTime: string;
   checkOutTime: string;
   idPreview?: string | null;
+  idCardPath?: string | null;
   syncedToCloud: boolean;
   createdAt: string;
   updatedAt: string;
@@ -82,6 +105,8 @@ declare global {
     electronAPI?: {
       saveGuest: (formData: OfflineGuestPayload) => Promise<{ id: string }>;
       searchGuests: (payload: GuestHistoryPayload) => Promise<GuestHistoryResult | null>;
+      searchGuestsList: (payload: GuestSearchListPayload) => Promise<GuestSearchListItem[]>;
+      getGuestStays: (payload: GuestStayQueryPayload) => Promise<RoomStatusGuestRecord[]>;
       getRoomStatuses: (payload: RoomStatusQueryPayload) => Promise<RoomStatusSnapshot[]>;
       releaseRoomStatus: (payload: RoomStatusReleasePayload) => Promise<RoomStatusSnapshot | null>;
       send?: (channel: string, data: unknown) => void;

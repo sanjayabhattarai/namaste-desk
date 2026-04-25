@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { addDays, format, isSameDay, isWithinInterval, startOfDay, subDays } from 'date-fns';
-import { Banknote, Users } from 'lucide-react';
+import { Users } from 'lucide-react';
 import CalendarDashboard from '@/components/CalendarDashboard';
 import CheckInForm from '@/components/CheckInForm';
 import BillingView from '@/components/BillingView';
@@ -46,7 +46,6 @@ export default function NamasteDesk() {
   const router = useRouter();
   const [rooms, setRooms] = useState<Room[]>([]);
   const [isRoomsLoading, setIsRoomsLoading] = useState(true);
-  const [totalSales, setTotalSales] = useState(0);
   const [activeRoomId, setActiveRoomId] = useState<number | null>(null);
   const [activeStayId, setActiveStayId] = useState<number | null>(null);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
@@ -57,6 +56,19 @@ export default function NamasteDesk() {
   const [showPastBill, setShowPastBill] = useState<Bill | null>(null);
   const [isGuestSummaryOpen, setIsGuestSummaryOpen] = useState(false);
   const [idCardViewerSrc, setIdCardViewerSrc] = useState<string | null>(null);
+  const [searchResults, setSearchResults] = useState<Array<{
+    id: string;
+    guestName: string;
+    phone: string;
+    roomNumber: string;
+    nationality: string;
+    checkInDate: string;
+    checkOutDate: string;
+    idCardPath?: string | null;
+    idPreview?: string | null;
+    createdAt: string;
+  }>>([]);
+  const [isGuestSearchLoading, setIsGuestSearchLoading] = useState(false);
   const [billingDraftsByStay, setBillingDraftsByStay] = useState<Record<number, BillingDraft>>({});
   const [session, setSession] = useState<LocalAuthSession | null | undefined>(undefined);
   const [stays, setStays] = useState<RoomStay[]>([]);
@@ -108,8 +120,16 @@ export default function NamasteDesk() {
                 return [];
               })
           : Promise.resolve([]);
+        const guestStaysPromise: Promise<LocalRoomStatusSnapshot['currentGuestStay'][]> = electronAPI?.getGuestStays
+          ? electronAPI
+              .getGuestStays({ owner_id: session.userId })
+              .catch((error) => {
+                console.error('Failed to load local guest stays:', error);
+                return [];
+              })
+          : Promise.resolve([]);
 
-        const [hotelResult, roomResult, roomStatusResult] = await Promise.all([
+        const [hotelResult, roomResult, roomStatusResult, guestStaysResult] = await Promise.all([
           authedSupabase
             .from('hotels')
             .select('is_approved, hotel_name, room_count, room_names, check_in_time, check_out_time, timezone')
@@ -121,6 +141,7 @@ export default function NamasteDesk() {
             .eq('owner_id', session.userId)
             .order('room_number', { ascending: true }),
           roomStatusPromise,
+          guestStaysPromise,
         ]);
 
         const { data: hotelRow, error: hotelError } = hotelResult;
@@ -169,14 +190,22 @@ export default function NamasteDesk() {
           (roomStatusResult ?? []).map((snapshot) => [String(snapshot.roomNumber), snapshot]),
         );
 
-        const loadedStays: RoomStay[] = (roomStatusResult ?? [])
-          .filter((snapshot) => snapshot.currentGuestStay)
-          .map((snapshot, index) => {
-            const guest = snapshot.currentGuestStay!;
+        const activeGuestIds = new Set(
+          (roomStatusResult ?? [])
+            .map((snapshot) => snapshot.currentGuestStay?.id)
+            .filter(Boolean),
+        );
+
+        const loadedStays: RoomStay[] = (guestStaysResult ?? [])
+          .filter((guest): guest is NonNullable<typeof guest> => Boolean(guest))
+          .map((guest) => {
+            const stableIdFromGuest = guest.id
+              .split('')
+              .reduce((acc, char) => ((acc * 31) + char.charCodeAt(0)) >>> 0, 7);
 
             return {
-              id: Number(new Date(guest.createdAt).getTime()) + index,
-              roomId: Number(snapshot.roomNumber),
+              id: Number(stableIdFromGuest),
+              roomId: Number(guest.roomNumber),
               guest: {
                 name: guest.guestName,
                 phone: guest.phone,
@@ -191,7 +220,7 @@ export default function NamasteDesk() {
               advancePaid: Number(guest.advancePaid ?? 0),
               startDate: new Date(guest.checkInDate),
               endDate: new Date(guest.checkOutDate),
-              checkedOut: false,
+              checkedOut: !activeGuestIds.has(guest.id),
             };
           });
 
@@ -288,6 +317,12 @@ export default function NamasteDesk() {
         return;
       }
 
+      if (explicitStay.checkedOut) {
+        setIsBillingOpen(false);
+        setIsCheckInOpen(false);
+        return;
+      }
+
       const shouldOpenBilling = forceBilling ?? true;
       setActiveRoomId(roomId);
       setActiveStayId(explicitStay.id);
@@ -314,10 +349,34 @@ export default function NamasteDesk() {
     }
 
     if (stayForDate?.checkedOut && stayForDate.receiptId) {
+      if (isSameDay(startOfDay(date), startOfDay(stayForDate.endDate))) {
+        setActiveRoomId(roomId);
+        setActiveStayId(null);
+        setSelectedDate(date);
+        setIsBillingOpen(false);
+        setIsCheckInOpen(true);
+        return;
+      }
+
       const receipt = pastReceipts.find((item) => item.id === stayForDate.receiptId);
       if (receipt) {
         setShowPastBill(receipt);
       }
+      setIsBillingOpen(false);
+      setIsCheckInOpen(false);
+      return;
+    }
+
+    if (stayForDate?.checkedOut) {
+      if (isSameDay(startOfDay(date), startOfDay(stayForDate.endDate))) {
+        setActiveRoomId(roomId);
+        setActiveStayId(null);
+        setSelectedDate(date);
+        setIsBillingOpen(false);
+        setIsCheckInOpen(true);
+        return;
+      }
+
       setIsBillingOpen(false);
       setIsCheckInOpen(false);
       return;
@@ -336,7 +395,7 @@ export default function NamasteDesk() {
 
   const handleCheckInSave = (formData: CheckInFormData) => {
     if (!activeRoomId) {
-      return;
+      return { success: false };
     }
 
     const requestedRoomIds = formData.isGroupEntry
@@ -348,7 +407,7 @@ export default function NamasteDesk() {
     const uniqueRoomIds = Array.from(new Set(requestedRoomIds));
     if (uniqueRoomIds.length === 0) {
       window.alert('Please select at least one room for check-in.');
-      return;
+      return { success: false };
     }
 
     const requestedStart = startOfDay(new Date(formData.checkInDate));
@@ -356,7 +415,7 @@ export default function NamasteDesk() {
 
     if (requestedEnd < requestedStart) {
       window.alert('Departure date cannot be earlier than arrival date.');
-      return;
+      return { success: false };
     }
 
     const conflicts: number[] = [];
@@ -368,9 +427,14 @@ export default function NamasteDesk() {
           return false;
         }
 
+        if (stay.checkedOut) {
+          return false;
+        }
+
         const existingStart = startOfDay(stay.startDate);
         const existingEnd = startOfDay(stay.endDate);
-        return requestedStart <= existingEnd && requestedEnd >= existingStart;
+        // Exclude checkout date: guest is gone on their endDate, so new check-in on same day is OK
+        return requestedStart < existingEnd && requestedEnd > existingStart;
       });
 
       if (hasOverlap) {
@@ -398,7 +462,7 @@ export default function NamasteDesk() {
 
     if (newStays.length === 0) {
       window.alert(`No room could be checked in. Occupied for selected dates: ${conflicts.join(', ')}`);
-      return;
+      return { success: false, conflictRooms: conflicts };
     }
 
     setStays((prev) => [...prev, ...newStays]);
@@ -411,6 +475,7 @@ export default function NamasteDesk() {
     setActiveRoomId(null);
     setActiveStayId(null);
     setSelectedDate(null);
+    return { success: true, guestName: formData.guestName, roomNumbers: newStays.map((s) => s.roomId) };
   };
 
   const handleCheckoutComplete = (finalAmount: number, billDetails: BillingDetails) => {
@@ -441,7 +506,15 @@ export default function NamasteDesk() {
 
     setPastReceipts((prev) => [newReceipt, ...prev]);
     setShowPastBill(newReceipt);
-    setStays((prev) => prev.filter((stay) => stay.id !== activeStayId));
+    setStays((prev) => prev.map((stay) => (
+      stay.id === activeStayId
+        ? {
+            ...stay,
+            checkedOut: true,
+            receiptId,
+          }
+        : stay
+    )));
 
     if (window.electronAPI?.releaseRoomStatus && session?.userId && activeRoomId) {
       void window.electronAPI.releaseRoomStatus({
@@ -450,7 +523,6 @@ export default function NamasteDesk() {
       });
     }
 
-    setTotalSales((prev) => prev + finalAmount);
     setBillingDraftsByStay((prev) => {
       const next = { ...prev };
       delete next[activeStayId];
@@ -555,6 +627,7 @@ export default function NamasteDesk() {
         .filter((room) => {
           const roomStaysOnDate = stays.filter(
             (stay) =>
+              !stay.checkedOut &&
               stay.roomId === room.id &&
               isWithinInterval(selectedDate, {
                 start: startOfDay(stay.startDate),
@@ -575,6 +648,10 @@ export default function NamasteDesk() {
     stays
       .filter(
         (stay) => {
+          if (stay.checkedOut) {
+            return false;
+          }
+
           const stayStart = getDateKeyInTimeZone(stay.startDate, hotelTimeZone);
           const stayEnd = getDateKeyInTimeZone(stay.endDate, hotelTimeZone);
 
@@ -583,22 +660,52 @@ export default function NamasteDesk() {
       )
       .map((stay) => stay.roomId),
   );
-  const filteredReceipts = pastReceipts.filter((bill) => {
-    if (searchQuery.length <= 2) {
-      return false;
+  const handleGuestSearch = async () => {
+    const query = searchQuery.trim();
+
+    if (query.length < 2 || !session?.userId || !window.electronAPI?.searchGuestsList) {
+      setSearchResults([]);
+      return;
     }
 
-    const normalizedQueryPhone = normalizePhone(searchQuery);
-    const safePhone = bill.phone ?? '';
-    const safeGuest = bill.guestName ?? '';
+    setIsGuestSearchLoading(true);
 
-    const matchesPhone =
-      normalizedQueryPhone.length > 0 &&
-      normalizePhone(safePhone).includes(normalizedQueryPhone);
-    const matchesGuest = safeGuest.toLowerCase().includes(searchQuery.toLowerCase());
+    try {
+      const results = await window.electronAPI.searchGuestsList({
+        owner_id: session.userId,
+        query,
+      });
 
-    return matchesPhone || matchesGuest;
-  });
+      setSearchResults(results ?? []);
+    } catch (error) {
+      console.error('Failed to search local guests:', error);
+      setSearchResults([]);
+    } finally {
+      setIsGuestSearchLoading(false);
+    }
+  };
+
+  const handleSelectSearchedGuest = (guest: {
+    id: string;
+    guestName: string;
+    phone: string;
+    roomNumber: string;
+    nationality: string;
+    checkInDate: string;
+    checkOutDate: string;
+    idCardPath?: string | null;
+    idPreview?: string | null;
+    createdAt: string;
+  }) => {
+    const source = toDisplayableIdCardSrc(guest.idCardPath ?? guest.idPreview ?? null);
+
+    if (!source) {
+      window.alert('No ID card image saved for this guest.');
+      return;
+    }
+
+    setIdCardViewerSrc(source);
+  };
 
   return (
     <div className="min-h-screen bg-slate-100 font-sans">
@@ -607,12 +714,21 @@ export default function NamasteDesk() {
       <main className="max-w-7xl mx-auto p-4 md:p-8">
         <ReceiptSearchPanel
           searchQuery={searchQuery}
-          onSearchChange={setSearchQuery}
-          filteredReceipts={filteredReceipts}
-          onSelectBill={setShowPastBill}
+          onSearchChange={(value) => {
+            setSearchQuery(value);
+            if (value.trim().length < 2) {
+              setSearchResults([]);
+            }
+          }}
+          onSearchSubmit={() => {
+            void handleGuestSearch();
+          }}
+          isSearching={isGuestSearchLoading}
+          searchResults={searchResults}
+          onSelectGuest={handleSelectSearchedGuest}
         />
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+        <div className="grid grid-cols-1 gap-6 mb-8">
           <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 flex items-center gap-4">
             <div className="bg-blue-100 p-4 rounded-2xl text-blue-600">
               <Users size={24} />
@@ -622,16 +738,6 @@ export default function NamasteDesk() {
               <p className="text-2xl font-black text-slate-800">
                 {occupiedRoomIdsToday.size} / {rooms.length}
               </p>
-            </div>
-          </div>
-
-          <div className="bg-emerald-600 p-6 rounded-3xl shadow-lg text-white flex items-center gap-4 transition-all hover:scale-[1.02]">
-            <div className="bg-emerald-500 p-4 rounded-2xl">
-              <Banknote size={24} />
-            </div>
-            <div>
-              <p className="text-sm text-emerald-100 font-bold">Today&apos;s Revenue</p>
-              <p className="text-2xl font-black italic">Rs. {totalSales}</p>
             </div>
           </div>
         </div>

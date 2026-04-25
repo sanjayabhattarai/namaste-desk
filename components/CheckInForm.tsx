@@ -15,7 +15,7 @@ interface CheckInFormProps {
   defaultCheckOutTime: string;
   minCheckInDate: string;
   onClose: () => void;
-  onSave: (data: CheckInFormData) => void;
+  onSave: (data: CheckInFormData) => Promise<{ success: boolean; guestName?: string; roomNumbers?: number[]; conflictRooms?: number[] }> | { success: boolean; guestName?: string; roomNumbers?: number[]; conflictRooms?: number[] };
 }
 
 export default function CheckInForm({ roomNumber, availableRoomNumbers, initialDate, defaultRoomPrice, defaultCheckInTime, defaultCheckOutTime, minCheckInDate, onClose, onSave }: CheckInFormProps) {
@@ -218,6 +218,17 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
     }
 
     try {
+      const result = await Promise.resolve(onSave(formData));
+
+      if (!result.success) {
+        const errorMsg = result.conflictRooms && result.conflictRooms.length > 0
+          ? `Checkout unsuccessful: Room ${result.conflictRooms.join(', ')} occupied for these dates.`
+          : 'Checkout unsuccessful for this date.';
+        setSaveStatus({ type: 'error', message: errorMsg });
+        setIsSaving(false);
+        return;
+      }
+
       const idCardDataUrl = idCardFile ? await readFileAsDataUrl(idCardFile) : null;
       await window.electronAPI.saveGuest({
         ...formData,
@@ -228,14 +239,15 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
         idPreview: null,
       });
 
-      setSaveStatus({ type: 'success', message: 'Namaste! Guest data saved securely on local disk.' });
+      const roomList = result.roomNumbers?.join(', ') || String(roomNumber);
+      const successMsg = `${result.guestName || 'Guest'} checked in successfully for room ${roomList}.`;
+      setSaveStatus({ type: 'success', message: successMsg });
       setFormData(createDefaultFormData());
       setIdCardFile(null);
       setIsIdCardUploadMode(true);
-      onSave(formData);
     } catch (error) {
       console.error('Failed to save guest offline:', error);
-      setSaveStatus({ type: 'error', message: 'Local save failed (disk/database issue). Data is not backed up locally.' });
+      setSaveStatus({ type: 'error', message: 'Checkout unsuccessful: Local save failed (disk/database issue).' });
     }
 
     setIsSaving(false);

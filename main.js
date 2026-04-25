@@ -256,6 +256,69 @@ ipcMain.handle('search-guests', async (_event, payload) => {
   };
 });
 
+ipcMain.handle('search-guests-list', async (_event, payload) => {
+  const ownerId = String(payload?.owner_id ?? '').trim();
+  const query = String(payload?.query ?? '').trim();
+
+  if (!ownerId || query.length < 2) {
+    return [];
+  }
+
+  const guests = await prisma.guestStay.findMany({
+    where: {
+      owner_id: ownerId,
+      OR: [
+        {
+          phone: {
+            contains: query,
+          },
+        },
+        {
+          guestName: {
+            contains: query,
+          },
+        },
+      ],
+    },
+    orderBy: {
+      createdAt: 'desc',
+    },
+    take: 25,
+  });
+
+  return guests.map((guest) => ({
+    id: guest.id,
+    guestName: guest.guestName,
+    phone: guest.phone,
+    roomNumber: guest.roomNumber,
+    nationality: guest.nationality,
+    checkInDate: guest.checkInDate,
+    checkOutDate: guest.checkOutDate,
+    idCardPath: guest.idCardPath,
+    idPreview: guest.idPreview,
+    createdAt: guest.createdAt,
+  }));
+});
+
+ipcMain.handle('get-guest-stays', async (_event, payload) => {
+  const ownerId = String(payload?.owner_id ?? '').trim();
+
+  if (!ownerId) {
+    return [];
+  }
+
+  const guests = await prisma.guestStay.findMany({
+    where: {
+      owner_id: ownerId,
+    },
+    orderBy: {
+      createdAt: 'desc',
+    },
+  });
+
+  return guests.map(toGuestSummary);
+});
+
 ipcMain.handle('get-room-statuses', async (_event, payload) => {
   const ownerId = String(payload?.owner_id ?? '').trim();
 

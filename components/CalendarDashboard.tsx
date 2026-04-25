@@ -108,18 +108,25 @@ export default function CalendarDashboard({ rooms, stays, onCellClick, onCancelS
                     )
                     .sort((a, b) => a.startDate.getTime() - b.startDate.getTime());
 
-                  const isOccupied = staysForRoomDay.length > 0;
-                  const activeStay = staysForRoomDay[0];
-                  const checkoutStay = staysForRoomDay.find((stay) => isSameDay(day, stay.endDate) && !stay.checkedOut);
+                  const activeStaysForRoomDay = staysForRoomDay.filter((stay) => !stay.checkedOut);
+                  const historicalStaysForRoomDay = staysForRoomDay.filter((stay) => stay.checkedOut);
+
+                  const isOccupied = activeStaysForRoomDay.length > 0;
+                  const activeStay = activeStaysForRoomDay[0];
+                  const historicalStay = historicalStaysForRoomDay[historicalStaysForRoomDay.length - 1];
+                  const isHistoricalCheckoutDay = Boolean(historicalStay && isSameDay(day, historicalStay.endDate));
+                  const isHistoricalCheckoutToday = Boolean(isHistoricalCheckoutDay && isSameDay(day, today));
+                  const checkoutStay = activeStaysForRoomDay.find((stay) => isSameDay(day, stay.endDate));
                   const checkInStay = staysForRoomDay.find(
                     (stay) => isSameDay(day, stay.startDate) && !stay.checkedOut && stay.id !== checkoutStay?.id,
                   );
-                  const hasMultipleStays = staysForRoomDay.length > 1;
+                  const hasMultipleStays = activeStaysForRoomDay.length > 1;
                   const isTransitionDay = Boolean(hasMultipleStays && checkoutStay && checkInStay);
                   const isSingleStayCheckoutDay =
                     Boolean(activeStay && isSameDay(day, activeStay.endDate) && !isTransitionDay);
                   const isCheckOutDay = isTransitionDay || isSingleStayCheckoutDay;
                   const isFullyBlocked = isOccupied && !isCheckOutDay;
+                  const isHistoricalOnly = !isOccupied && historicalStaysForRoomDay.length > 0;
 
                   return (
                     <td 
@@ -232,6 +239,52 @@ export default function CalendarDashboard({ rooms, stays, onCellClick, onCancelS
                             </div>
                           )}
                         </div>
+                      ) : isHistoricalOnly ? (
+                        isHistoricalCheckoutToday ? (
+                          <div className="h-full w-full flex flex-col gap-1">
+                            <div
+                              className="h-1/2 bg-rose-200 border border-rose-300 rounded-t-lg flex items-center px-2 justify-between"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                if (historicalStay) {
+                                  onCellClick(room.id, day, historicalStay.id, true);
+                                }
+                              }}
+                            >
+                              <span className="text-[9px] font-black text-rose-700 uppercase truncate w-16">
+                                {historicalStay?.guest.name}
+                              </span>
+                              <div className="flex items-center gap-1">
+                                <LogOut size={10} className="text-rose-500" />
+                              </div>
+                            </div>
+                            <div
+                              className="h-1/2 bg-emerald-200 border border-emerald-300 rounded-b-lg flex items-center px-2 justify-between"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onCellClick(room.id, day, undefined, false);
+                              }}
+                            >
+                              <span className="text-[9px] font-black text-emerald-700 uppercase truncate w-16">Add New Guest</span>
+                              <div className="flex items-center gap-1">
+                                <Plus size={10} className="text-emerald-600" />
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <div
+                            className="h-full w-full rounded-lg border border-slate-300 bg-slate-100 flex flex-col items-center justify-center text-slate-600"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              if (historicalStay) {
+                                onCellClick(room.id, day, historicalStay.id, true);
+                              }
+                            }}
+                          >
+                            <span className="text-[10px] font-black uppercase tracking-wider">Checked Out</span>
+                            <span className="text-[9px] mt-1">View Receipt</span>
+                          </div>
+                        )
                       ) : (
                         <div
                           role="button"
