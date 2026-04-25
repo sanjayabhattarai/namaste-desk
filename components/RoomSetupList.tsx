@@ -38,25 +38,45 @@ export default function RoomSetupList({ rooms, onChange }: RoomSetupListProps) {
   };
 
   return (
-    <div className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+    <section className="space-y-4 rounded-3xl border border-slate-200 bg-slate-50 p-4">
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="text-sm font-black uppercase tracking-wide text-slate-600">Room Setup</p>
-          <p className="text-xs text-slate-500">Add each room you want to manage in the dashboard.</p>
+          <p className="text-xs text-slate-500">Add room number and room name so your check-in form stays clean and fast.</p>
         </div>
-        <button
-          type="button"
-          onClick={addRoom}
-          className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-800"
-        >
-          <Plus size={16} />
-          Add Another Room
-        </button>
+        <div className="flex items-center gap-2">
+          <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-slate-600 border border-slate-200">
+            {rooms.length} room{rooms.length === 1 ? '' : 's'}
+          </span>
+          <button
+            type="button"
+            onClick={addRoom}
+            className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-800"
+          >
+            <Plus size={16} />
+            Add Room
+          </button>
+        </div>
       </div>
 
       <div className="grid gap-3">
         {rooms.map((room, index) => (
-          <div key={`${room.roomNumber}-${index}`} className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-white p-4 md:grid-cols-[100px_1fr_160px_120px_auto] md:items-end">
+          <div key={`${room.roomNumber}-${index}`} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="mb-3 flex items-center justify-between">
+              <p className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-black text-emerald-700">
+                Room Entry {index + 1}
+              </p>
+              <button
+                type="button"
+                onClick={() => removeRoom(index)}
+                className="inline-flex items-center justify-center rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-rose-700 hover:bg-rose-100"
+                aria-label={`Remove room ${index + 1}`}
+              >
+                <Trash2 size={16} />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-[120px_1fr_170px_130px] md:items-end">
             <div>
               <label className="block text-xs font-bold text-slate-500 mb-1">Room No.</label>
               <input
@@ -106,14 +126,7 @@ export default function RoomSetupList({ rooms, onChange }: RoomSetupListProps) {
               />
             </div>
 
-            <button
-              type="button"
-              onClick={() => removeRoom(index)}
-              className="inline-flex items-center justify-center rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-rose-700 hover:bg-rose-100"
-              aria-label={`Remove room ${index + 1}`}
-            >
-              <Trash2 size={16} />
-            </button>
+            </div>
           </div>
         ))}
       </div>
@@ -121,6 +134,6 @@ export default function RoomSetupList({ rooms, onChange }: RoomSetupListProps) {
       <div className="rounded-xl bg-slate-100 px-4 py-3 text-sm font-bold text-slate-700">
         Total rooms being added: {rooms.length}
       </div>
-    </div>
+    </section>
   );
 }

@@ -78,7 +78,14 @@ export default function LoginPage() {
       return { isApproved: Boolean(data.is_approved), error: roomRowsError, hotelProfile: undefined as HotelProfile | undefined };
     }
 
-    const roomMaster: HotelRoomMaster[] = (roomRows ?? []).map((row) => ({
+    const typedRoomRows = (roomRows ?? []) as Array<{
+      room_number: number | string | null;
+      room_name: string | null;
+      room_type: string | null;
+      rate: number | string | null;
+    }>;
+
+    const roomMaster: HotelRoomMaster[] = typedRoomRows.map((row: (typeof typedRoomRows)[number]) => ({
       roomNumber: Number(row.room_number),
       roomName: row.room_name ?? `Room ${row.room_number}`,
       roomType: row.room_type ?? 'Standard',
@@ -314,7 +321,7 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
-      <div className="w-full max-w-md bg-white rounded-3xl shadow-xl border border-slate-200 p-8">
+      <div className={`w-full bg-white rounded-3xl shadow-xl border border-slate-200 p-8 ${mode === 'signup' ? 'max-w-5xl' : 'max-w-md'}`}>
         <h1 className="text-2xl font-black text-slate-800">Hotel Owner Access</h1>
         <p className="text-sm text-slate-500 mt-1">
           {mode === 'login'

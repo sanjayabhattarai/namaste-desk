@@ -68,7 +68,12 @@ export default function PendingApprovalPage() {
             checkInTime: data.check_in_time ?? session.hotelProfile?.checkInTime ?? '12:00',
             checkOutTime: data.check_out_time ?? session.hotelProfile?.checkOutTime ?? '10:00',
             timezone: data.timezone ?? session.hotelProfile?.timezone ?? 'Asia/Kathmandu',
-            roomMaster: (roomRows ?? []).map((row) => ({
+            roomMaster: (roomRows ?? []).map((row: {
+              room_number: number | string | null;
+              room_name: string | null;
+              room_type: string | null;
+              rate: number | string | null;
+            }) => ({
               roomNumber: Number(row.room_number),
               roomName: row.room_name ?? `Room ${row.room_number}`,
               roomType: row.room_type ?? 'Standard',
