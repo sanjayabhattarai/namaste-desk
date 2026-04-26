@@ -1,5 +1,5 @@
 "use client"
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { X, User, Phone, Calendar, Camera, Users, Globe, Clock, Mail, Briefcase, MapPin, Plane, TrainFront, FileText, StickyNote, BadgeHelp, Printer } from 'lucide-react';
 import { format, isValid } from 'date-fns';
 import { CheckInFormData } from '@/types/domain';
@@ -102,6 +102,17 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
   const [guestHistoryList, setGuestHistoryList] = useState<GuestHistoryListItem[]>([]);
   const [guestHistoryRawList, setGuestHistoryRawList] = useState<GuestHistoryListItem[]>([]);
   const [isSearchingHistory, setIsSearchingHistory] = useState(false);
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const [isIdCardActionOpen, setIsIdCardActionOpen] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const cameraVideoRef = useRef<HTMLVideoElement | null>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
+  const currentIdCardDisplaySrc = formData.idPreview ?? toDisplayableIdCardSrc(formData.idCardPath ?? null);
+  const isPdfDocument = Boolean(
+    (idCardFile && idCardFile.type === 'application/pdf')
+    || /^data:application\/pdf/i.test(currentIdCardDisplaySrc ?? '')
+    || /\.pdf($|\?)/i.test(currentIdCardDisplaySrc ?? ''),
+  );
 
   const normalizePhone = (value: string) => value.replace(/[^0-9+]/g, '').trim();
 
@@ -156,18 +167,44 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
     const roomValue = String(roomId);
     setFormData((prev) => {
       const exists = prev.roomNumbers.includes(roomValue);
+      const nextRoomNumbers = exists
+        ? prev.roomNumbers.filter((item) => item !== roomValue)
+        : [...prev.roomNumbers, roomValue];
+
+      const uniqueNextRoomNumbers = Array.from(new Set(nextRoomNumbers));
+
       if (exists) {
         return {
           ...prev,
-          roomNumbers: prev.roomNumbers.filter((item) => item !== roomValue),
+          roomNumbers: uniqueNextRoomNumbers,
+          roomNumber: uniqueNextRoomNumbers[0] ?? prev.roomNumber,
         };
       }
 
       return {
         ...prev,
-        roomNumbers: [...prev.roomNumbers, roomValue],
+        roomNumbers: uniqueNextRoomNumbers,
+        roomNumber: uniqueNextRoomNumbers[0] ?? prev.roomNumber,
       };
     });
+  };
+
+  const selectAllGroupRooms = () => {
+    setFormData((prev) => {
+      const allRooms = availableRoomNumbers.map((room) => String(room));
+      return {
+        ...prev,
+        roomNumbers: allRooms,
+        roomNumber: allRooms[0] ?? prev.roomNumber,
+      };
+    });
+  };
+
+  const clearGroupRooms = () => {
+    setFormData((prev) => ({
+      ...prev,
+      roomNumbers: [],
+    }));
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -178,6 +215,105 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
       setIsIdCardUploadMode(false);
     }
   };
+
+  const stopCameraStream = () => {
+    if (cameraStreamRef.current) {
+      cameraStreamRef.current.getTracks().forEach((track) => track.stop());
+      cameraStreamRef.current = null;
+    }
+
+    if (cameraVideoRef.current) {
+      cameraVideoRef.current.srcObject = null;
+    }
+  };
+
+  const attachCameraStreamToVideo = (stream: MediaStream) => {
+    let attempts = 0;
+
+    const tryAttach = () => {
+      const video = cameraVideoRef.current;
+      if (video) {
+        video.srcObject = stream;
+        video.onloadedmetadata = () => {
+          void video.play();
+        };
+        return;
+      }
+
+      attempts += 1;
+      if (attempts < 20) {
+        window.setTimeout(tryAttach, 50);
+      }
+    };
+
+    tryAttach();
+  };
+
+  const openCamera = async () => {
+    try {
+      let stream: MediaStream;
+
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' } },
+          audio: false,
+        });
+      } catch {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      }
+
+      cameraStreamRef.current = stream;
+      setIsCameraOpen(true);
+      attachCameraStreamToVideo(stream);
+    } catch (error) {
+      console.error('Unable to open camera:', error);
+      setSaveStatus({ type: 'error', message: 'Unable to open camera. Please allow camera permission or use Upload File.' });
+    }
+  };
+
+  const captureFromCamera = () => {
+    const video = cameraVideoRef.current;
+    if (!video) {
+      setSaveStatus({ type: 'error', message: 'Camera is not ready yet. Please wait 1 second and try again.' });
+      return;
+    }
+
+    if ((video.videoWidth || 0) === 0 || (video.videoHeight || 0) === 0) {
+      setSaveStatus({ type: 'error', message: 'Camera preview is not ready. Please wait and try Capture again.' });
+      return;
+    }
+
+    const width = video.videoWidth || 1280;
+    const height = video.videoHeight || 720;
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+
+    const context = canvas.getContext('2d');
+    if (!context) {
+      return;
+    }
+
+    context.drawImage(video, 0, 0, width, height);
+    const capturedDataUrl = canvas.toDataURL('image/jpeg', 0.92);
+
+    setFormData((prev) => ({
+      ...prev,
+      idPreview: capturedDataUrl,
+      idCardPath: null,
+    }));
+
+    setIdCardFile(null);
+    setIsIdCardUploadMode(false);
+    setIsCameraOpen(false);
+    stopCameraStream();
+  };
+
+  useEffect(() => {
+    return () => {
+      stopCameraStream();
+    };
+  }, []);
 
   useEffect(() => {
     const phoneQuery = formData.phone.trim();
@@ -274,6 +410,8 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
       }
     }
 
+    const fallbackDisplaySrc = resolvedIdCardPath ? toDisplayableIdCardSrc(resolvedIdCardPath) : null;
+
     setFormData((prev) => ({
       ...prev,
       guestName: guestHistory.guestName ?? prev.guestName,
@@ -282,11 +420,11 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
       postalAddress: guestHistory.postalAddress ?? prev.postalAddress,
       phone: guestHistory.phone ?? prev.phone,
       idCardPath: resolvedIdCardPath ?? resolvedIdCardSource ?? null,
-      idPreview: resolvedIdCardSource ?? null,
+      idPreview: resolvedIdCardSource ?? fallbackDisplaySrc ?? null,
     }));
 
     setIdCardFile(null);
-    setIsIdCardUploadMode(!resolvedIdCardSource);
+    setIsIdCardUploadMode(!(resolvedIdCardSource || fallbackDisplaySrc));
 
     setGuestHistoryList([]);
     setGuestHistoryRawList([]);
@@ -875,32 +1013,52 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
                 </div>
               </div>
 
-              <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
-                <label htmlFor="roomNumber" className="block text-xs font-bold text-slate-500 mb-1">Room Number</label>
-                <select
-                  id="roomNumber"
-                  title="Room number"
-                  className="bg-transparent font-black text-slate-800 text-lg w-full outline-none"
-                  value={formData.roomNumber}
-                  onChange={(e) =>
-                    setFormData({
-                      ...formData,
-                      roomNumber: e.target.value,
-                      roomNumbers: formData.isGroupEntry ? formData.roomNumbers : [e.target.value],
-                    })
-                  }
-                >
-                  {availableRoomNumbers.map((roomOption) => (
-                    <option key={roomOption} value={roomOption}>
-                      Room {roomOption}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {!formData.isGroupEntry ? (
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                  <label htmlFor="roomNumber" className="block text-xs font-bold text-slate-500 mb-1">Room Number</label>
+                  <select
+                    id="roomNumber"
+                    title="Room number"
+                    className="bg-transparent font-black text-slate-800 text-lg w-full outline-none"
+                    value={formData.roomNumber}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        roomNumber: e.target.value,
+                        roomNumbers: [e.target.value],
+                      })
+                    }
+                  >
+                    {availableRoomNumbers.map((roomOption) => (
+                      <option key={roomOption} value={roomOption}>
+                        Room {roomOption}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
 
               {formData.isGroupEntry && (
                 <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 md:col-span-2 lg:col-span-3">
-                  <label className="block text-xs font-bold text-slate-500 mb-2">Assign Rooms For Group</label>
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <label className="block text-xs font-bold text-slate-500">Assign Rooms For Group</label>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={selectAllGroupRooms}
+                        className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-emerald-700 hover:bg-emerald-100"
+                      >
+                        Select All
+                      </button>
+                      <button
+                        type="button"
+                        onClick={clearGroupRooms}
+                        className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wide text-slate-600 hover:bg-slate-100"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  </div>
                   <div className="flex flex-wrap gap-2">
                     {availableRoomNumbers.map((roomOption) => {
                       const isSelected = formData.roomNumbers.includes(String(roomOption));
@@ -918,7 +1076,7 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
                   </div>
                   <p className="text-xs text-slate-500 mt-2">
                     {formData.roomNumbers.length > 0
-                      ? `Selected ${formData.roomNumbers.length} room(s)`
+                      ? `Selected ${formData.roomNumbers.length} room(s): ${formData.roomNumbers.join(', ')}`
                       : 'Select at least one room for group entry'}
                   </p>
                 </div>
@@ -982,52 +1140,148 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
 
           <section>
             <label className="block text-sm font-bold text-slate-700 mb-2">ID Card / Document <span className="text-rose-500">*</span></label>
-            <div className="relative group">
-              {(isIdCardUploadMode || !formData.idPreview) ? (
-                <input
-                  type="file"
-                  aria-label="Upload ID document"
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20"
-                  onChange={handleFileChange}
-                  accept="image/*"
-                  required={!formData.idPreview && !formData.idCardPath}
-                />
-              ) : null}
-              <div className="border-2 border-dashed border-slate-200 rounded-2xl p-6 flex flex-col items-center justify-center bg-slate-50 group-hover:bg-emerald-50 group-hover:border-emerald-200 transition-all">
-                {formData.idPreview ? (
-                  <>
-                    <img
-                      src={formData.idPreview}
-                      alt="ID Preview"
-                      className="h-40 w-full object-cover rounded-lg shadow-md"
-                      onError={() => {
-                        setFormData((prev) => ({ ...prev, idPreview: null, idCardPath: null }));
-                        setIdCardFile(null);
-                        setIsIdCardUploadMode(true);
-                      }}
-                    />
-                    <div className="mt-3 flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setIsIdCardUploadMode(true)}
-                        className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-200"
-                      >
-                        Replace ID Card
-                      </button>
-                    </div>
-                  </>
+            <input
+              ref={fileInputRef}
+              type="file"
+              aria-label="Upload ID document"
+              className="hidden"
+              onChange={handleFileChange}
+              accept="image/*,application/pdf,.pdf"
+            />
+
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => setIsIdCardActionOpen(true)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  setIsIdCardActionOpen(true);
+                }
+              }}
+              className="border-2 border-dashed border-slate-200 rounded-2xl p-6 flex flex-col items-center justify-center bg-slate-50 hover:bg-emerald-50 hover:border-emerald-200 transition-all cursor-pointer"
+            >
+              {currentIdCardDisplaySrc ? (
+                isPdfDocument ? (
+                  <div className="h-40 w-full rounded-lg border border-slate-200 bg-white flex flex-col items-center justify-center text-slate-700">
+                    <FileText size={28} className="text-emerald-600 mb-2" />
+                    <span className="text-sm font-black">PDF attached</span>
+                    <span className="text-xs text-slate-500 mt-1">Click to replace with photo or file</span>
+                  </div>
                 ) : (
-                  <>
-                    <div className="p-3 bg-white rounded-full shadow-sm mb-2 text-emerald-600">
-                      <Camera size={24} />
-                    </div>
-                    <span className="text-xs font-black text-slate-400 uppercase tracking-widest">Take Photo or Upload</span>
-                  </>
-                )}
-              </div>
+                  <img
+                    src={currentIdCardDisplaySrc}
+                    alt="ID Preview"
+                    className="h-40 w-full object-cover rounded-lg shadow-md"
+                    onError={() => {
+                      setFormData((prev) => ({ ...prev, idPreview: null, idCardPath: null }));
+                      setIdCardFile(null);
+                      setIsIdCardUploadMode(true);
+                    }}
+                  />
+                )
+              ) : (
+                <>
+                  <div className="p-3 bg-white rounded-full shadow-sm mb-2 text-emerald-600">
+                    <Camera size={24} />
+                  </div>
+                  <span className="text-xs font-black text-slate-400 uppercase tracking-widest">Upload file or open camera</span>
+                </>
+              )}
             </div>
+
+            {!currentIdCardDisplaySrc ? (
+              <input
+                type="text"
+                value=""
+                readOnly
+                required
+                aria-hidden="true"
+                className="absolute pointer-events-none opacity-0 h-0 w-0"
+              />
+            ) : null}
           </section>
         </form>
+
+        {isIdCardActionOpen ? (
+          <div className="fixed inset-0 z-[121] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="w-full max-w-sm rounded-2xl bg-white p-4 shadow-2xl space-y-3">
+              <h3 className="text-base font-black text-slate-800">Add ID Card</h3>
+              <p className="text-xs text-slate-500">Choose how you want to attach ID card.</p>
+              <div className="grid grid-cols-1 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsIdCardActionOpen(false);
+                    void openCamera();
+                  }}
+                  className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-black text-emerald-700 hover:bg-emerald-100"
+                >
+                  Take Photo
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsIdCardActionOpen(false);
+                    fileInputRef.current?.click();
+                  }}
+                  className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 hover:bg-slate-100"
+                >
+                  Upload File (Image or PDF)
+                </button>
+                {currentIdCardDisplaySrc ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFormData((prev) => ({ ...prev, idPreview: null, idCardPath: null }));
+                      setIdCardFile(null);
+                      setIsIdCardUploadMode(true);
+                      setIsIdCardActionOpen(false);
+                    }}
+                    className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-black text-rose-700 hover:bg-rose-100"
+                  >
+                    Remove Current ID
+                  </button>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsIdCardActionOpen(false)}
+                className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {isCameraOpen ? (
+          <div className="fixed inset-0 z-[120] bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="w-full max-w-2xl rounded-2xl bg-white p-4 shadow-2xl space-y-3">
+              <h3 className="text-lg font-black text-slate-800">Capture ID Card</h3>
+              <video ref={cameraVideoRef} autoPlay playsInline muted className="w-full rounded-xl bg-black max-h-[60vh] object-contain" />
+              <div className="flex flex-wrap justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsCameraOpen(false);
+                    stopCameraStream();
+                  }}
+                  className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-100"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={captureFromCamera}
+                  className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-800"
+                >
+                  Capture Photo
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {/* Sticky Footer Button */}
         <div className="p-6 border-t bg-white sticky bottom-0">
