@@ -17,12 +17,18 @@ interface GuestSearchListPayload {
   query: string;
 }
 
+interface IdCardDataUrlPayload {
+  source: string;
+}
+
 interface GuestSearchListItem {
   id: string;
   guestName: string;
   phone: string;
   roomNumber: string;
   nationality: string;
+  profession?: string | null;
+  postalAddress?: string | null;
   checkInDate: string;
   checkOutDate: string;
   idCardPath?: string | null;
@@ -106,6 +112,7 @@ declare global {
       saveGuest: (formData: OfflineGuestPayload) => Promise<{ id: string }>;
       searchGuests: (payload: GuestHistoryPayload) => Promise<GuestHistoryResult | null>;
       searchGuestsList: (payload: GuestSearchListPayload) => Promise<GuestSearchListItem[]>;
+      readIdCardDataUrl: (payload: IdCardDataUrlPayload) => Promise<string | null>;
       getGuestStays: (payload: GuestStayQueryPayload) => Promise<RoomStatusGuestRecord[]>;
       getRoomStatuses: (payload: RoomStatusQueryPayload) => Promise<RoomStatusSnapshot[]>;
       releaseRoomStatus: (payload: RoomStatusReleasePayload) => Promise<RoomStatusSnapshot | null>;

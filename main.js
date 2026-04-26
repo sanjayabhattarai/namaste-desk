@@ -26,6 +26,41 @@ const getFileExtensionFromMime = (mimeType, fallbackName = '') => {
   return '.jpg';
 };
 
+const getMimeTypeFromExtension = (filePath) => {
+  const ext = path.extname(String(filePath || '')).toLowerCase();
+
+  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
+  if (ext === '.png') return 'image/png';
+  if (ext === '.webp') return 'image/webp';
+  if (ext === '.gif') return 'image/gif';
+
+  return 'application/octet-stream';
+};
+
+const toLocalPathFromFileUrl = (value) => {
+  const raw = String(value || '').trim();
+  if (!raw) {
+    return '';
+  }
+
+  if (/^file:\/\//i.test(raw)) {
+    try {
+      const parsed = new URL(raw);
+      let pathname = decodeURIComponent(parsed.pathname || '');
+
+      if (/^\/[a-zA-Z]:\//.test(pathname)) {
+        pathname = pathname.slice(1);
+      }
+
+      return pathname;
+    } catch {
+      return raw;
+    }
+  }
+
+  return raw;
+};
+
 const parseDataUrl = (dataUrl) => {
   const match = String(dataUrl || '').match(/^data:([^;]+);base64,(.+)$/);
   if (!match) {
@@ -292,12 +327,37 @@ ipcMain.handle('search-guests-list', async (_event, payload) => {
     phone: guest.phone,
     roomNumber: guest.roomNumber,
     nationality: guest.nationality,
+    profession: guest.profession,
+    postalAddress: guest.postalAddress,
     checkInDate: guest.checkInDate,
     checkOutDate: guest.checkOutDate,
     idCardPath: guest.idCardPath,
     idPreview: guest.idPreview,
     createdAt: guest.createdAt,
   }));
+});
+
+ipcMain.handle('read-id-card-data-url', async (_event, payload) => {
+  const source = String(payload?.source ?? '').trim();
+
+  if (!source) {
+    return null;
+  }
+
+  if (/^data:/i.test(source)) {
+    return source;
+  }
+
+  const localPath = toLocalPathFromFileUrl(source);
+
+  try {
+    const fileBuffer = await fs.readFile(localPath);
+    const mimeType = getMimeTypeFromExtension(localPath);
+    return `data:${mimeType};base64,${fileBuffer.toString('base64')}`;
+  } catch (error) {
+    console.error('Failed to read ID card file for preview:', error);
+    return null;
+  }
 });
 
 ipcMain.handle('get-guest-stays', async (_event, payload) => {

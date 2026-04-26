@@ -20,6 +20,18 @@ const EMPTY_BILLING_DRAFT: BillingDraft = {
 };
 
 const normalizePhone = (value: string) => value.replace(/[\s+\-()]/g, '');
+const combineDateAndTime = (dateValue: Date | string, timeValue: string, fallbackHour: number) => {
+  const date = new Date(dateValue);
+  const [rawHour, rawMinute] = String(timeValue || '').split(':');
+  const parsedHour = Number(rawHour);
+  const parsedMinute = Number(rawMinute);
+  const hour = Number.isInteger(parsedHour) ? parsedHour : fallbackHour;
+  const minute = Number.isInteger(parsedMinute) ? parsedMinute : 0;
+
+  date.setHours(hour, minute, 0, 0);
+  return date;
+};
+
 const toDisplayableIdCardSrc = (source?: string | null) => {
   if (!source) {
     return null;
@@ -220,6 +232,8 @@ export default function NamasteDesk() {
               advancePaid: Number(guest.advancePaid ?? 0),
               startDate: new Date(guest.checkInDate),
               endDate: new Date(guest.checkOutDate),
+              checkInTime: guest.checkInTime ?? session.hotelProfile?.checkInTime ?? '12:00',
+              checkOutTime: guest.checkOutTime ?? session.hotelProfile?.checkOutTime ?? '10:00',
               checkedOut: !activeGuestIds.has(guest.id),
             };
           });
@@ -410,11 +424,11 @@ export default function NamasteDesk() {
       return { success: false };
     }
 
-    const requestedStart = startOfDay(new Date(formData.checkInDate));
-    const requestedEnd = startOfDay(new Date(formData.checkOutDate));
+    const requestedStart = combineDateAndTime(formData.checkInDate, formData.checkInTime, 12);
+    const requestedEnd = combineDateAndTime(formData.checkOutDate, formData.checkOutTime, 10);
 
-    if (requestedEnd < requestedStart) {
-      window.alert('Departure date cannot be earlier than arrival date.');
+    if (requestedEnd <= requestedStart) {
+      window.alert('Departure date and time must be later than arrival date and time.');
       return { success: false };
     }
 
@@ -431,9 +445,10 @@ export default function NamasteDesk() {
           return false;
         }
 
-        const existingStart = startOfDay(stay.startDate);
-        const existingEnd = startOfDay(stay.endDate);
-        // Exclude checkout date: guest is gone on their endDate, so new check-in on same day is OK
+        const existingStart = combineDateAndTime(stay.startDate, stay.checkInTime, 12);
+        const existingEnd = combineDateAndTime(stay.endDate, stay.checkOutTime, 10);
+
+        // End time is treated as checkout boundary (exclusive), so same-day turnover is allowed.
         return requestedStart < existingEnd && requestedEnd > existingStart;
       });
 
@@ -456,6 +471,8 @@ export default function NamasteDesk() {
         advancePaid: Number(formData.advancePaid) || 0,
         startDate: new Date(formData.checkInDate),
         endDate: new Date(formData.checkOutDate),
+        checkInTime: formData.checkInTime,
+        checkOutTime: formData.checkOutTime,
         checkedOut: false,
       });
     });

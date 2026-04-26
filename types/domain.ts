@@ -45,6 +45,8 @@ export interface RoomStay {
   advancePaid: number;
   startDate: Date;
   endDate: Date;
+  checkInTime: string;
+  checkOutTime: string;
   checkedOut: boolean;
   receiptId?: number;
 }

@@ -115,7 +115,7 @@ export default function CalendarDashboard({ rooms, stays, onCellClick, onCancelS
                   const activeStay = activeStaysForRoomDay[0];
                   const historicalStay = historicalStaysForRoomDay[historicalStaysForRoomDay.length - 1];
                   const isHistoricalCheckoutDay = Boolean(historicalStay && isSameDay(day, historicalStay.endDate));
-                  const isHistoricalCheckoutToday = Boolean(isHistoricalCheckoutDay && isSameDay(day, today));
+                  const isHistoricalCheckoutWithTurnover = Boolean(isHistoricalCheckoutDay);
                   const checkoutStay = activeStaysForRoomDay.find((stay) => isSameDay(day, stay.endDate));
                   const checkInStay = staysForRoomDay.find(
                     (stay) => isSameDay(day, stay.startDate) && !stay.checkedOut && stay.id !== checkoutStay?.id,
@@ -240,7 +240,7 @@ export default function CalendarDashboard({ rooms, stays, onCellClick, onCancelS
                           )}
                         </div>
                       ) : isHistoricalOnly ? (
-                        isHistoricalCheckoutToday ? (
+                        isHistoricalCheckoutWithTurnover ? (
                           <div className="h-full w-full flex flex-col gap-1">
                             <div
                               className="h-1/2 bg-rose-200 border border-rose-300 rounded-t-lg flex items-center px-2 justify-between"

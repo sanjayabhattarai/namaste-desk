@@ -1,7 +1,6 @@
 "use client"
 import React, { useEffect, useState } from 'react';
-import Image from 'next/image';
-import { X, User, Phone, Calendar, Camera, Users, Globe, Clock, Mail, Briefcase, MapPin, Plane, TrainFront, FileText, StickyNote, BadgeHelp } from 'lucide-react';
+import { X, User, Phone, Calendar, Camera, Users, Globe, Clock, Mail, Briefcase, MapPin, Plane, TrainFront, FileText, StickyNote, BadgeHelp, Printer } from 'lucide-react';
 import { format, isValid } from 'date-fns';
 import { CheckInFormData } from '@/types/domain';
 import { supabase } from '@/lib/supabaseClient';
@@ -22,18 +21,6 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
   // 1. Safety Check: If no date, use "Today"
   const safeDate = initialDate && isValid(initialDate) ? initialDate : new Date();
 
-  type GuestHistoryResult = {
-    id: string;
-    guestName: string;
-    nationality: string;
-    profession?: string | null;
-    postalAddress?: string | null;
-    phone: string;
-    owner_id: string;
-    idPreview?: string | null;
-    idCardPath?: string | null;
-  };
-
   type GuestHistoryListItem = {
     id: string;
     guestName: string;
@@ -46,6 +33,7 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
     postalAddress?: string | null;
     idCardPath?: string | null;
     idPreview?: string | null;
+    createdAt?: string;
   };
 
   const toDisplayableIdCardSrc = (source?: string | null) => {
@@ -112,7 +100,50 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
   const [saveStatus, setSaveStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [guestHistoryList, setGuestHistoryList] = useState<GuestHistoryListItem[]>([]);
+  const [guestHistoryRawList, setGuestHistoryRawList] = useState<GuestHistoryListItem[]>([]);
   const [isSearchingHistory, setIsSearchingHistory] = useState(false);
+
+  const normalizePhone = (value: string) => value.replace(/[^0-9+]/g, '').trim();
+
+  const dedupeGuestHistoryList = (items: GuestHistoryListItem[]) => {
+    const byCustomer = new Map<string, GuestHistoryListItem>();
+
+    for (const item of items) {
+      const key = `${(item.guestName || '').trim().toLowerCase()}|${normalizePhone(item.phone || '')}`;
+
+      if (!byCustomer.has(key)) {
+        byCustomer.set(key, item);
+        continue;
+      }
+
+      const existing = byCustomer.get(key);
+      const existingHasId = Boolean(existing?.idCardPath || existing?.idPreview);
+      const nextHasId = Boolean(item.idCardPath || item.idPreview);
+
+      if (!existingHasId && nextHasId) {
+        byCustomer.set(key, item);
+      }
+    }
+
+    return Array.from(byCustomer.values());
+  };
+
+  const resolveIdCardDataUrl = async (source?: string | null) => {
+    const raw = String(source || '').trim();
+    if (!raw) {
+      return null;
+    }
+
+    if (/^data:/i.test(raw)) {
+      return raw;
+    }
+
+    if (window.electronAPI?.readIdCardDataUrl) {
+      return window.electronAPI.readIdCardDataUrl({ source: raw });
+    }
+
+    return toDisplayableIdCardSrc(raw);
+  };
 
   const readFileAsDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -154,6 +185,7 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
 
     if (phoneQuery.length < 4 || !electronAPI?.searchGuestsList) {
       setGuestHistoryList([]);
+      setGuestHistoryRawList([]);
       setIsSearchingHistory(false);
       return;
     }
@@ -164,6 +196,7 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
 
       if (!userId) {
         setGuestHistoryList([]);
+        setGuestHistoryRawList([]);
         setIsSearchingHistory(false);
         return;
       }
@@ -176,10 +209,12 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
           query: phoneQuery,
         });
 
-        setGuestHistoryList(results);
+        setGuestHistoryRawList(results);
+        setGuestHistoryList(dedupeGuestHistoryList(results));
       } catch (error) {
         console.error('Failed to search guest history:', error);
         setGuestHistoryList([]);
+        setGuestHistoryRawList([]);
       } finally {
         setIsSearchingHistory(false);
       }
@@ -190,9 +225,53 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
     };
   }, [formData.phone]);
 
-  const applyGuestHistory = (guestHistory: GuestHistoryListItem) => {
+  const applyGuestHistory = async (guestHistory: GuestHistoryListItem) => {
     if (!guestHistory) {
       return;
+    }
+
+    const fallbackHistoryWithIdCard = guestHistoryRawList.find(
+      (item) =>
+        normalizePhone(item.phone) === normalizePhone(guestHistory.phone)
+        && Boolean(item.idCardPath || item.idPreview),
+    );
+
+    const preferredIdCardPath =
+      guestHistory.idCardPath
+      ?? fallbackHistoryWithIdCard?.idCardPath
+      ?? null;
+
+    let resolvedIdCardSource =
+      await resolveIdCardDataUrl(preferredIdCardPath)
+      ?? toDisplayableIdCardSrc(
+      guestHistory.idCardPath
+      ?? guestHistory.idPreview
+      ?? fallbackHistoryWithIdCard?.idCardPath
+      ?? fallbackHistoryWithIdCard?.idPreview
+      ?? null,
+    );
+
+    let resolvedIdCardPath = guestHistory.idCardPath ?? fallbackHistoryWithIdCard?.idCardPath ?? null;
+
+    if (!resolvedIdCardSource && window.electronAPI?.searchGuests) {
+      try {
+        const { data: activeSessionData } = await supabase.auth.getSession();
+        const userId = activeSessionData.session?.user?.id;
+
+        if (userId) {
+          const latestGuest = await window.electronAPI.searchGuests({
+            owner_id: userId,
+            phone: guestHistory.phone,
+          });
+
+          resolvedIdCardSource =
+            await resolveIdCardDataUrl(latestGuest?.idCardPath ?? latestGuest?.idPreview ?? null)
+            ?? toDisplayableIdCardSrc(latestGuest?.idCardPath ?? latestGuest?.idPreview ?? null);
+          resolvedIdCardPath = latestGuest?.idCardPath ?? resolvedIdCardPath;
+        }
+      } catch (error) {
+        console.error('Failed to load fallback ID card from history:', error);
+      }
     }
 
     setFormData((prev) => ({
@@ -202,14 +281,15 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
       profession: guestHistory.profession ?? prev.profession,
       postalAddress: guestHistory.postalAddress ?? prev.postalAddress,
       phone: guestHistory.phone ?? prev.phone,
-      idCardPath: guestHistory.idCardPath ?? prev.idCardPath ?? null,
-      idPreview: toDisplayableIdCardSrc(guestHistory.idCardPath ?? guestHistory.idPreview ?? prev.idPreview),
+      idCardPath: resolvedIdCardPath ?? resolvedIdCardSource ?? null,
+      idPreview: resolvedIdCardSource ?? null,
     }));
 
     setIdCardFile(null);
-    setIsIdCardUploadMode(false);
+    setIsIdCardUploadMode(!resolvedIdCardSource);
 
     setGuestHistoryList([]);
+    setGuestHistoryRawList([]);
   };
 
   const submitGuest = async () => {
@@ -265,13 +345,20 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
         return;
       }
 
-      const idCardDataUrl = idCardFile ? await readFileAsDataUrl(idCardFile) : null;
+      const normalizedHistoryId = toDisplayableIdCardSrc(formData.idCardPath ?? formData.idPreview ?? null);
+      const idCardDataUrl = idCardFile
+        ? await readFileAsDataUrl(idCardFile)
+        : (normalizedHistoryId?.startsWith('data:') ? normalizedHistoryId : null);
+      const existingIdCardPath = idCardFile
+        ? null
+        : (normalizedHistoryId?.startsWith('data:') ? null : (normalizedHistoryId ?? null));
+
       await window.electronAPI.saveGuest({
         ...formData,
         owner_id: userId,
         idCardDataUrl,
         idCardFileName: idCardFile?.name ?? null,
-        existingIdCardPath: idCardFile ? null : (formData.idCardPath ?? null),
+        existingIdCardPath,
         idPreview: null,
       });
 
@@ -292,6 +379,126 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     await submitGuest();
+  };
+
+  const escapeHtml = (value: string) => value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+
+  const formatDateValue = (value: string) => {
+    if (!value) {
+      return '-';
+    }
+
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      return value;
+    }
+
+    return format(parsed, 'PPP');
+  };
+
+  const handlePrintCheckInSheet = async () => {
+    const printableIdSource = idCardFile
+      ? await readFileAsDataUrl(idCardFile)
+      : await resolveIdCardDataUrl(formData.idCardPath ?? formData.idPreview ?? null);
+
+    const selectedRooms = formData.isGroupEntry
+      ? formData.roomNumbers.filter((item) => item.trim().length > 0)
+      : [formData.roomNumber];
+
+    const printWindow = window.open('', '_blank', 'width=900,height=1200');
+    if (!printWindow) {
+      setSaveStatus({ type: 'error', message: 'Unable to open print window. Please allow pop-ups and try again.' });
+      return;
+    }
+
+    const html = `
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Guest Check-in Print</title>
+          <style>
+            @page { size: A4; margin: 14mm; }
+            * { box-sizing: border-box; }
+            body { font-family: Arial, Helvetica, sans-serif; color: #0f172a; margin: 0; }
+            .sheet { width: 100%; min-height: 100%; border: 1px solid #d1d5db; border-radius: 10px; padding: 16px; }
+            .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 1px solid #e5e7eb; padding-bottom: 10px; margin-bottom: 12px; }
+            .title { font-size: 20px; font-weight: 800; margin: 0; }
+            .subtitle { margin: 4px 0 0; color: #475569; font-size: 12px; }
+            .meta { text-align: right; font-size: 12px; color: #475569; }
+            .grid { display: grid; grid-template-columns: 1fr 220px; gap: 14px; }
+            .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
+            .field { border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; }
+            .label { display: block; font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
+            .value { font-size: 13px; font-weight: 600; color: #0f172a; min-height: 16px; word-break: break-word; }
+            .id-card { border: 1px solid #e5e7eb; border-radius: 10px; padding: 8px; }
+            .id-card-label { font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; margin-bottom: 8px; }
+            .id-card-img { width: 100%; height: 260px; object-fit: cover; border-radius: 8px; border: 1px solid #e5e7eb; }
+            .id-placeholder { width: 100%; height: 260px; border-radius: 8px; border: 1px dashed #cbd5e1; display: flex; align-items: center; justify-content: center; color: #64748b; font-size: 12px; }
+            .terms { margin-top: 14px; padding: 10px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 12px; color: #334155; line-height: 1.5; }
+            .signatures { margin-top: 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+            .sig-box { padding-top: 42px; border-top: 1px solid #334155; font-size: 12px; font-weight: 700; color: #0f172a; text-align: center; }
+          </style>
+        </head>
+        <body>
+          <div class="sheet">
+            <div class="header">
+              <div>
+                <h1 class="title">Guest Check-in Sheet</h1>
+                <p class="subtitle">Print copy for physical signature</p>
+              </div>
+              <div class="meta">
+                <div>Printed: ${escapeHtml(format(new Date(), 'PPP p'))}</div>
+                <div>Room(s): ${escapeHtml(selectedRooms.join(', ') || String(roomNumber))}</div>
+              </div>
+            </div>
+
+            <div class="grid">
+              <div class="field-grid">
+                <div class="field"><span class="label">Guest Name</span><div class="value">${escapeHtml(formData.guestName || '-')}</div></div>
+                <div class="field"><span class="label">Mobile Number</span><div class="value">${escapeHtml(formData.phone || '-')}</div></div>
+                <div class="field"><span class="label">Nationality</span><div class="value">${escapeHtml(formData.nationality || '-')}</div></div>
+                <div class="field"><span class="label">Total Guests</span><div class="value">${escapeHtml(formData.totalGuests || '1')}</div></div>
+                <div class="field"><span class="label">Check-in</span><div class="value">${escapeHtml(`${formatDateValue(formData.checkInDate)} ${formData.checkInTime || ''}`.trim())}</div></div>
+                <div class="field"><span class="label">Check-out</span><div class="value">${escapeHtml(`${formatDateValue(formData.checkOutDate)} ${formData.checkOutTime || ''}`.trim())}</div></div>
+                <div class="field"><span class="label">Address</span><div class="value">${escapeHtml(formData.postalAddress || '-')}</div></div>
+                <div class="field"><span class="label">Purpose of Visit</span><div class="value">${escapeHtml(formData.purposeOfVisit || '-')}</div></div>
+              </div>
+
+              <div class="id-card">
+                <div class="id-card-label">ID Card / Document</div>
+                ${printableIdSource
+        ? `<img class="id-card-img" src="${escapeHtml(printableIdSource)}" alt="ID Card" />`
+        : '<div class="id-placeholder">No ID image attached</div>'}
+              </div>
+            </div>
+
+            <div class="terms">
+              I confirm that the above information is accurate and agree to hotel policies and local regulations.
+            </div>
+
+            <div class="signatures">
+              <div class="sig-box">Customer Signature</div>
+              <div class="sig-box">Reception Signature</div>
+            </div>
+          </div>
+        </body>
+      </html>
+    `;
+
+    printWindow.document.open();
+    printWindow.document.write(html);
+    printWindow.document.close();
+
+    printWindow.focus();
+    window.setTimeout(() => {
+      printWindow.print();
+    }, 300);
   };
 
   return (
@@ -419,7 +626,7 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
                           </div>
                           <button
                             type="button"
-                            onClick={() => applyGuestHistory(guest)}
+                            onClick={() => void applyGuestHistory(guest)}
                             className="shrink-0 rounded-lg bg-amber-600 px-3 py-2 text-xs font-black text-white hover:bg-amber-700"
                           >
                             Fill
@@ -829,14 +1036,23 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
               {saveStatus.message}
             </p>
           ) : null}
-          <button 
-            type="button"
-            onClick={() => void submitGuest()}
-            disabled={isSaving}
-            className="w-full py-4 bg-emerald-800 text-white rounded-2xl font-black text-lg shadow-xl shadow-emerald-100 hover:bg-emerald-900 active:scale-95 transition-all flex items-center justify-center gap-2"
-          >
-            {isSaving ? 'Saving...' : 'Check-in Guest'}
-          </button>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={() => void handlePrintCheckInSheet()}
+              className="w-full py-4 bg-white text-emerald-800 border-2 border-emerald-700 rounded-2xl font-black text-lg hover:bg-emerald-50 transition-all flex items-center justify-center gap-2"
+            >
+              <Printer size={18} /> Print Check-in Sheet
+            </button>
+            <button 
+              type="button"
+              onClick={() => void submitGuest()}
+              disabled={isSaving}
+              className="w-full py-4 bg-emerald-800 text-white rounded-2xl font-black text-lg shadow-xl shadow-emerald-100 hover:bg-emerald-900 active:scale-95 transition-all flex items-center justify-center gap-2"
+            >
+              {isSaving ? 'Saving...' : 'Check-in Guest'}
+            </button>
+          </div>
         </div>
       </div>
     </div>
