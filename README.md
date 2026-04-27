@@ -1,36 +1,87 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 🏨 Namaste Desk
 
-## Getting Started
+**Namaste Desk** is a professional, desktop-first Hotel Management System (PMS) designed for small to mid-sized hotels. It combines the reliability of a **local-first desktop application** with the management power of a **cloud-based SaaS**.
 
-First, run the development server:
+By leveraging **Electron**, **Next.js**, and **SQLite**, Namaste Desk ensures that guest operations never stop, even during internet outages, while providing hotel owners with centralized control via **Supabase**.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+---
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Key Features
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+* **Offline-Ready Operations:** Guest check-ins, ID card storage, and billing work 100% offline.
+* **Visual Room Timeline:** Interactive calendar-style dashboard for managing room occupancy and stays.
+* **Privacy-First Guest Records:** Sensitive guest data and ID card captures are stored locally on the device, never sent to the cloud.
+* **Smart History Autofill:** Instant retrieval of returning guest details from local SQLite via phone number lookup.
+* **Hybrid Cloud Management:** Owner profiles, room masters, and subscription approvals are managed securely via Supabase.
+* **Integrated Billing:** Localized billing system with thermal print-ready receipts and automated record-keeping.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+---
 
-## Learn More
+## 🏗️ Architecture & Data Flow
 
-To learn more about Next.js, take a look at the following resources:
+Namaste Desk uses a sophisticated multi-layer storage strategy to balance performance, privacy, and control:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+| Data Type | Storage Location | Sync Strategy |
+| :--- | :--- | :--- |
+| **Owner Auth & Profile** | Supabase Cloud | Real-time Cloud |
+| **Room Master Config** | Supabase Cloud | Fetched at Login |
+| **Guest Records (PII)** | Local SQLite (Prisma) | **Device Only** |
+| **ID Card Documents** | Local Filesystem | **Device Only** |
+| **Billing & Receipts** | Local SQLite (Prisma) | **Device Only** |
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
 
-## Deploy on Vercel
+---
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## 🛠️ Tech Stack
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+* **App Shell:** Electron 41 (Desktop Runtime)
+* **Frontend:** Next.js 16 (App Router) + React 19
+* **Styling:** Tailwind CSS v4
+* **Local Database:** SQLite + Prisma ORM (via `better-sqlite3`)
+* **Cloud Backend:** Supabase (Auth + PostgreSQL)
+* **Icons/UI:** Lucide React + Radix UI
+
+---
+
+## ⚙️ Environment Setup
+
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/your-profile/namaste-desk.git
+   cd namaste-desk
+   ```
+
+2. **Install dependencies:**
+   ```bash
+   npm install
+   ```
+
+3. **Configure Environment:**
+   Create a `.env` file in the root directory and add your Supabase credentials:
+   ```env
+   NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
+   NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+   DATABASE_URL="file:./prisma/dev.db"
+   ```
+
+4. **Initialize Local Database:**
+   ```bash
+   npx prisma generate
+   npx prisma db push
+   ```
+
+---
+
+## 💻 Development Scripts
+
+* `npm run dev:desktop` – **Recommended:** Launches Electron and Next.js concurrently.
+* `npm run dev` – Runs the Next.js frontend in the browser (limited hardware access).
+* `npm run rebuild:electron` – Rebuilds native `better-sqlite3` bindings for your OS.
+* `npm run lint` – Runs ESLint to check for code quality issues.
+
+---
+
+## ⚖️ License
+
+Private / Proprietary. All rights reserved.
+

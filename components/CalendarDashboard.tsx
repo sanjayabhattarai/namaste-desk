@@ -16,6 +16,7 @@ export default function CalendarDashboard({ rooms, stays, onCellClick, onCancelS
   const [monthOffset, setMonthOffset] = useState(0);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const todayHeaderRef = useRef<HTMLTableCellElement | null>(null);
+  const firstMonthDayRef = useRef<HTMLTableCellElement | null>(null);
 
   const visibleMonthDate = addMonths(today, monthOffset);
   const days = eachDayOfInterval({
@@ -25,15 +26,22 @@ export default function CalendarDashboard({ rooms, stays, onCellClick, onCancelS
 
   useEffect(() => {
     const container = scrollContainerRef.current;
-    const todayCell = todayHeaderRef.current;
+    
+    if (!container) {
+      return;
+    }
 
-    if (!container || !todayCell) {
+    // When in current month (monthOffset === 0), center on today's date
+    // Otherwise, scroll to the first day of the visible month
+    const targetCell = monthOffset === 0 ? todayHeaderRef.current : firstMonthDayRef.current;
+
+    if (!targetCell) {
       return;
     }
 
     const targetScrollLeft = Math.max(
       0,
-      todayCell.offsetLeft - container.clientWidth / 2 + todayCell.clientWidth / 2,
+      targetCell.offsetLeft - container.clientWidth / 2 + targetCell.clientWidth / 2,
     );
 
     container.scrollLeft = targetScrollLeft;
@@ -75,10 +83,10 @@ export default function CalendarDashboard({ rooms, stays, onCellClick, onCancelS
           <thead>
             <tr>
               <th className="p-4 bg-slate-100 border-b border-r text-left text-xs font-black uppercase text-slate-500 w-32 sticky left-0 z-10">Room</th>
-              {days.map(day => (
+              {days.map((day, index) => (
                 <th
                   key={day.toString()}
-                  ref={isSameDay(day, today) ? todayHeaderRef : undefined}
+                  ref={index === 0 ? firstMonthDayRef : (isSameDay(day, today) ? todayHeaderRef : undefined)}
                   className={`p-4 border-b text-center min-w-[140px] ${isSameDay(day, today) ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-50 text-slate-600'}`}
                 >
                   <p className="text-xs font-bold uppercase">{format(day, 'EEE')}</p>
@@ -273,7 +281,7 @@ export default function CalendarDashboard({ rooms, stays, onCellClick, onCancelS
                           </div>
                         ) : (
                           <div
-                            className="h-full w-full rounded-lg border border-slate-300 bg-slate-100 flex flex-col items-center justify-center text-slate-600"
+                            className="h-full w-full rounded-lg border border-orange-300 bg-orange-100 flex flex-col items-center justify-center text-orange-600"
                             onClick={(event) => {
                               event.stopPropagation();
                               if (historicalStay) {

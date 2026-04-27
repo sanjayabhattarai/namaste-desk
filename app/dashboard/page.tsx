@@ -89,6 +89,7 @@ export default function NamasteDesk() {
   const [billingDraftsByStay, setBillingDraftsByStay] = useState<Record<number, BillingDraft>>({});
   const [session, setSession] = useState<LocalAuthSession | null | undefined>(undefined);
   const [stays, setStays] = useState<RoomStay[]>([]);
+  const electronAPI = typeof window !== 'undefined' ? window.electronAPI : undefined;
 
   useEffect(() => {
     setSession(getSession());
@@ -101,55 +102,65 @@ export default function NamasteDesk() {
       return;
     }
 
-    try {
-      const raw = window.localStorage.getItem(getReceiptsStorageKey(ownerId));
-      if (!raw) {
-        setPastReceipts([]);
+    const initializeBills = async () => {
+      if (!electronAPI) {
         return;
       }
 
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) {
+      try {
+        // First, attempt legacy localStorage migration
+        const storageKey = getReceiptsStorageKey(ownerId);
+        const raw = window.localStorage.getItem(storageKey);
+
+        if (raw) {
+          try {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              const legacyBills: Bill[] = parsed
+                .filter((item): item is Bill => Boolean(item && typeof item === 'object'))
+                .map((item) => ({
+                  id: Number(item.id),
+                  roomNumber: Number(item.roomNumber),
+                  guestName: String(item.guestName ?? ''),
+                  phone: String(item.phone ?? ''),
+                  roomPrice: Number(item.roomPrice ?? 0),
+                  advancePaid: Number(item.advancePaid ?? 0),
+                  days: Number(item.days ?? 1),
+                  foodItems: Array.isArray(item.foodItems) ? item.foodItems : [],
+                  discount: Number(item.discount ?? 0),
+                  grandTotal: Number(item.grandTotal ?? 0),
+                  date: String(item.date ?? ''),
+                }))
+                .filter((item) => Number.isFinite(item.id));
+
+              if (legacyBills.length > 0 && electronAPI.migrateBillsToSqlite) {
+                await electronAPI.migrateBillsToSqlite({
+                  owner_id: ownerId,
+                  bills: legacyBills,
+                });
+              }
+            }
+          } catch (parseError) {
+            console.warn('Failed to parse legacy bills:', parseError);
+          } finally {
+            // Always remove old localStorage entry after migration attempt
+            window.localStorage.removeItem(storageKey);
+          }
+        }
+
+        // Load bills from SQLite (either fresh data or migrated data)
+        if (electronAPI.getBills) {
+          const bills = await electronAPI.getBills({ owner_id: ownerId });
+          setPastReceipts(bills ?? []);
+        }
+      } catch (error) {
+        console.error('Failed to initialize bills:', error);
         setPastReceipts([]);
-        return;
       }
+    };
 
-      const normalized: Bill[] = parsed
-        .filter((item): item is Bill => Boolean(item && typeof item === 'object'))
-        .map((item) => ({
-          id: Number(item.id),
-          roomNumber: Number(item.roomNumber),
-          guestName: String(item.guestName ?? ''),
-          phone: String(item.phone ?? ''),
-          roomPrice: Number(item.roomPrice ?? 0),
-          advancePaid: Number(item.advancePaid ?? 0),
-          days: Number(item.days ?? 1),
-          foodItems: Array.isArray(item.foodItems) ? item.foodItems : [],
-          discount: Number(item.discount ?? 0),
-          grandTotal: Number(item.grandTotal ?? 0),
-          date: String(item.date ?? ''),
-        }))
-        .filter((item) => Number.isFinite(item.id));
-
-      setPastReceipts(normalized.sort((a, b) => b.id - a.id));
-    } catch (error) {
-      console.error('Failed to restore local past receipts:', error);
-      setPastReceipts([]);
-    }
+    void initializeBills();
   }, [session?.userId]);
-
-  useEffect(() => {
-    const ownerId = session?.userId;
-    if (!ownerId) {
-      return;
-    }
-
-    try {
-      window.localStorage.setItem(getReceiptsStorageKey(ownerId), JSON.stringify(pastReceipts));
-    } catch (error) {
-      console.error('Failed to persist local past receipts:', error);
-    }
-  }, [session?.userId, pastReceipts]);
 
   const getDateKeyInTimeZone = (date: Date, timeZone: string) => {
     return new Intl.DateTimeFormat('en-CA', {
@@ -603,6 +614,15 @@ export default function NamasteDesk() {
 
     setPastReceipts((prev) => [newReceipt, ...prev]);
     setShowPastBill(newReceipt);
+
+    if (window.electronAPI?.saveBill && session?.userId) {
+      void window.electronAPI.saveBill({
+        owner_id: session.userId,
+        bill: newReceipt,
+      }).catch((error) => {
+        console.error('Failed to persist bill to local SQLite:', error);
+      });
+    }
     setStays((prev) => prev.map((stay) => (
       stay.id === activeStayId
         ? {
@@ -719,7 +739,7 @@ export default function NamasteDesk() {
     ? toDisplayableIdCardSrc(occupiedSummaryStay.guest.idCardPath ?? occupiedSummaryStay.guest.idPreview ?? null)
     : null;
 
-  const availableRoomNumbersForSelectedDate = selectedDate
+  const availableRoomsForSelectedDate = selectedDate
     ? rooms
         .filter((room) => {
           const roomStaysOnDate = stays.filter(
@@ -738,8 +758,7 @@ export default function NamasteDesk() {
 
           return roomStaysOnDate.every((stay) => isSameDay(startOfDay(selectedDate), startOfDay(stay.endDate)));
         })
-        .map((room) => room.id)
-    : rooms.map((room) => room.id);
+    : rooms;
 
   const occupiedRoomIdsToday = new Set(
     stays
@@ -909,7 +928,7 @@ export default function NamasteDesk() {
       {isCheckInOpen && activeRoomId && selectedDate && (
         <CheckInForm
           roomNumber={activeRoomId}
-          availableRoomNumbers={availableRoomNumbersForSelectedDate}
+          availableRooms={availableRoomsForSelectedDate}
           initialDate={selectedDate}
           defaultRoomPrice={activeRoom?.price ?? 1500}
           defaultCheckInTime={session.hotelProfile?.checkInTime ?? '12:00'}

@@ -138,6 +138,28 @@ const toRoomStatusSnapshot = (row) => ({
   updatedAt: row.updatedAt,
 });
 
+const toBillRecord = (row) => ({
+  id: (() => {
+    const rawId = String(row.id || '');
+    const separatorIndex = rawId.lastIndexOf(':');
+    const legacyId = separatorIndex >= 0 ? rawId.slice(separatorIndex + 1) : rawId;
+    const parsed = Number(legacyId);
+    return Number.isFinite(parsed) ? parsed : 0;
+  })(),
+  roomNumber: Number(row.roomNumber),
+  guestName: String(row.guestName || ''),
+  phone: String(row.phone || ''),
+  roomPrice: Number(row.roomPrice || 0),
+  advancePaid: Number(row.advancePaid || 0),
+  days: Number(row.days || 1),
+  foodItems: Array.isArray(row.foodItems) ? row.foodItems : [],
+  discount: Number(row.discount || 0),
+  grandTotal: Number(row.grandTotal || 0),
+  date: String(row.date || ''),
+});
+
+const toBillStorageId = (ownerId, billId) => `${ownerId}:${String(billId).trim()}`;
+
 function createWindow() {
   const mainWindow = new BrowserWindow({
     width: 1200,
@@ -447,6 +469,125 @@ ipcMain.handle('release-room-status', async (_event, payload) => {
   });
 
   return toRoomStatusSnapshot(updated);
+});
+
+ipcMain.handle('save-bill', async (_event, payload) => {
+  const ownerId = String(payload?.owner_id ?? '').trim();
+  const bill = payload?.bill;
+
+  if (!ownerId || !bill) {
+    return null;
+  }
+
+  const billId = String(bill.id ?? '').trim();
+  if (!billId) {
+    throw new Error('Missing bill id for local bill save.');
+  }
+
+  const storageId = toBillStorageId(ownerId, billId);
+
+  const saved = await prisma.bill.upsert({
+    where: { id: storageId },
+    create: {
+      id: storageId,
+      owner_id: ownerId,
+      roomNumber: Number(bill.roomNumber ?? 0),
+      guestName: String(bill.guestName ?? ''),
+      phone: String(bill.phone ?? ''),
+      roomPrice: Number(bill.roomPrice ?? 0),
+      advancePaid: Number(bill.advancePaid ?? 0),
+      days: Number(bill.days ?? 1),
+      foodItems: Array.isArray(bill.foodItems) ? bill.foodItems : [],
+      discount: Number(bill.discount ?? 0),
+      grandTotal: Number(bill.grandTotal ?? 0),
+      date: String(bill.date ?? ''),
+    },
+    update: {
+      owner_id: ownerId,
+      roomNumber: Number(bill.roomNumber ?? 0),
+      guestName: String(bill.guestName ?? ''),
+      phone: String(bill.phone ?? ''),
+      roomPrice: Number(bill.roomPrice ?? 0),
+      advancePaid: Number(bill.advancePaid ?? 0),
+      days: Number(bill.days ?? 1),
+      foodItems: Array.isArray(bill.foodItems) ? bill.foodItems : [],
+      discount: Number(bill.discount ?? 0),
+      grandTotal: Number(bill.grandTotal ?? 0),
+      date: String(bill.date ?? ''),
+    },
+  });
+
+  return toBillRecord(saved);
+});
+
+ipcMain.handle('get-bills', async (_event, payload) => {
+  const ownerId = String(payload?.owner_id ?? '').trim();
+
+  if (!ownerId) {
+    return [];
+  }
+
+  const bills = await prisma.bill.findMany({
+    where: { owner_id: ownerId },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+  });
+
+  return bills.map(toBillRecord);
+});
+
+ipcMain.handle('migrate-bills-to-sqlite', async (_event, payload) => {
+  const ownerId = String(payload?.owner_id ?? '').trim();
+  const bills = Array.isArray(payload?.bills) ? payload.bills : [];
+
+  if (!ownerId || bills.length === 0) {
+    return { importedCount: 0 };
+  }
+
+  let importedCount = 0;
+
+  for (const bill of bills) {
+    const billId = String(bill?.id ?? '').trim();
+    if (!billId) {
+      continue;
+    }
+
+    const storageId = toBillStorageId(ownerId, billId);
+
+    await prisma.bill.upsert({
+      where: { id: storageId },
+      create: {
+        id: storageId,
+        owner_id: ownerId,
+        roomNumber: Number(bill.roomNumber ?? 0),
+        guestName: String(bill.guestName ?? ''),
+        phone: String(bill.phone ?? ''),
+        roomPrice: Number(bill.roomPrice ?? 0),
+        advancePaid: Number(bill.advancePaid ?? 0),
+        days: Number(bill.days ?? 1),
+        foodItems: Array.isArray(bill.foodItems) ? bill.foodItems : [],
+        discount: Number(bill.discount ?? 0),
+        grandTotal: Number(bill.grandTotal ?? 0),
+        date: String(bill.date ?? ''),
+      },
+      update: {
+        owner_id: ownerId,
+        roomNumber: Number(bill.roomNumber ?? 0),
+        guestName: String(bill.guestName ?? ''),
+        phone: String(bill.phone ?? ''),
+        roomPrice: Number(bill.roomPrice ?? 0),
+        advancePaid: Number(bill.advancePaid ?? 0),
+        days: Number(bill.days ?? 1),
+        foodItems: Array.isArray(bill.foodItems) ? bill.foodItems : [],
+        discount: Number(bill.discount ?? 0),
+        grandTotal: Number(bill.grandTotal ?? 0),
+        date: String(bill.date ?? ''),
+      },
+    });
+
+    importedCount += 1;
+  }
+
+  return { importedCount };
 });
 
 app.on('window-all-closed', () => {

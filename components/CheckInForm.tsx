@@ -2,12 +2,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { X, User, Phone, Calendar, Camera, Users, Globe, Clock, Mail, Briefcase, MapPin, Plane, TrainFront, FileText, StickyNote, BadgeHelp, Printer } from 'lucide-react';
 import { format, isValid } from 'date-fns';
-import { CheckInFormData } from '@/types/domain';
+import { CheckInFormData, Room } from '@/types/domain';
 import { supabase } from '@/lib/supabaseClient';
 
 interface CheckInFormProps {
   roomNumber: number | string;
-  availableRoomNumbers: number[];
+  availableRooms: Room[];
   initialDate: Date | null;
   defaultRoomPrice: number;
   defaultCheckInTime: string;
@@ -17,7 +17,7 @@ interface CheckInFormProps {
   onSave: (data: CheckInFormData) => Promise<{ success: boolean; guestName?: string; roomNumbers?: number[]; conflictRooms?: number[] }> | { success: boolean; guestName?: string; roomNumbers?: number[]; conflictRooms?: number[] };
 }
 
-export default function CheckInForm({ roomNumber, availableRoomNumbers, initialDate, defaultRoomPrice, defaultCheckInTime, defaultCheckOutTime, minCheckInDate, onClose, onSave }: CheckInFormProps) {
+export default function CheckInForm({ roomNumber, availableRooms, initialDate, defaultRoomPrice, defaultCheckInTime, defaultCheckOutTime, minCheckInDate, onClose, onSave }: CheckInFormProps) {
   // 1. Safety Check: If no date, use "Today"
   const safeDate = initialDate && isValid(initialDate) ? initialDate : new Date();
 
@@ -116,6 +116,30 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
 
   const normalizePhone = (value: string) => value.replace(/[^0-9+]/g, '').trim();
 
+  const handleCheckInDateChange = (newDate: string) => {
+    // Prevent accepting dates earlier than minCheckInDate
+    if (newDate && newDate < minCheckInDate) {
+      setSaveStatus({ type: 'error', message: 'Check-in date cannot be in the past.' });
+      return;
+    }
+    
+    // Clear error message when valid date is selected
+    if (newDate >= minCheckInDate) {
+      setSaveStatus(null);
+    }
+    
+    // Update check-in date and adjust check-out date if needed
+    const newCheckOutDate = new Date(new Date(newDate).getTime() + 86400000);
+    setFormData((prev) => ({
+      ...prev,
+      checkInDate: newDate,
+      // Ensure check-out date is at least 1 day after check-in
+      checkOutDate: newDate && prev.checkOutDate < newDate 
+        ? format(newCheckOutDate, 'yyyy-MM-dd')
+        : prev.checkOutDate,
+    }));
+  };
+
   const dedupeGuestHistoryList = (items: GuestHistoryListItem[]) => {
     const byCustomer = new Map<string, GuestHistoryListItem>();
 
@@ -191,7 +215,7 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
 
   const selectAllGroupRooms = () => {
     setFormData((prev) => {
-      const allRooms = availableRoomNumbers.map((room) => String(room));
+      const allRooms = availableRooms.map((room) => String(room.id));
       return {
         ...prev,
         roomNumbers: allRooms,
@@ -452,6 +476,12 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
 
     if (!hasIdCard) {
       setSaveStatus({ type: 'error', message: 'Check-in unsuccessful: ID card is required.' });
+      setIsSaving(false);
+      return;
+    }
+
+    if (formData.checkInDate < minCheckInDate) {
+      setSaveStatus({ type: 'error', message: 'Check-in unsuccessful: Check-in date cannot be in the past.' });
       setIsSaving(false);
       return;
     }
@@ -968,7 +998,7 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
                       aria-label="Arrival date"
                       className="bg-transparent font-bold text-sm focus:outline-none w-full"
                       value={formData.checkInDate}
-                      onChange={(e) => setFormData({ ...formData, checkInDate: e.target.value })}
+                      onChange={(e) => handleCheckInDateChange(e.target.value)}
                     />
                   </div>
                   <div className="flex items-center gap-2">
@@ -1015,7 +1045,7 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
 
               {!formData.isGroupEntry ? (
                 <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
-                  <label htmlFor="roomNumber" className="block text-xs font-bold text-slate-500 mb-1">Room Number</label>
+                  <label htmlFor="roomNumber" className="block text-xs font-bold text-slate-500 mb-1">Select Room</label>
                   <select
                     id="roomNumber"
                     title="Room number"
@@ -1029,9 +1059,9 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
                       })
                     }
                   >
-                    {availableRoomNumbers.map((roomOption) => (
-                      <option key={roomOption} value={roomOption}>
-                        Room {roomOption}
+                    {availableRooms.map((roomOption) => (
+                      <option key={roomOption.id} value={roomOption.id}>
+                        {roomOption.roomName || `Room ${roomOption.id}`}
                       </option>
                     ))}
                   </select>
@@ -1060,16 +1090,16 @@ export default function CheckInForm({ roomNumber, availableRoomNumbers, initialD
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    {availableRoomNumbers.map((roomOption) => {
-                      const isSelected = formData.roomNumbers.includes(String(roomOption));
+                    {availableRooms.map((roomOption) => {
+                      const isSelected = formData.roomNumbers.includes(String(roomOption.id));
                       return (
                         <button
-                          key={roomOption}
+                          key={roomOption.id}
                           type="button"
-                          onClick={() => toggleRoomSelection(roomOption)}
+                          onClick={() => toggleRoomSelection(roomOption.id)}
                           className={`px-3 py-1.5 rounded-full text-xs font-black border transition-colors ${isSelected ? 'bg-emerald-700 text-white border-emerald-700' : 'bg-white text-slate-600 border-slate-200'}`}
                         >
-                          Room {roomOption}
+                          {roomOption.roomName || `Room ${roomOption.id}`}
                         </button>
                       );
                     })}

@@ -66,3 +66,22 @@ model RoomStatus {
   @@unique([owner_id, roomNumber])
   @@index([owner_id])
 }
+
+model Bill {
+  id          String   @id
+  owner_id    String
+  roomNumber  Int
+  guestName   String
+  phone       String
+  roomPrice   Float
+  advancePaid Float    @default(0)
+  days        Int      @default(1)
+  foodItems   Json
+  discount    Float    @default(0)
+  grandTotal  Float
+  date        String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([owner_id, createdAt])
+}

@@ -61,6 +61,34 @@ interface RoomStatusReleasePayload {
   roomNumber: string;
 }
 
+interface LocalBillRecord {
+  id: number;
+  roomNumber: number;
+  guestName: string;
+  phone: string;
+  roomPrice: number;
+  advancePaid: number;
+  days: number;
+  foodItems: Array<{ name: string; price: number }>;
+  discount: number;
+  grandTotal: number;
+  date: string;
+}
+
+interface SaveBillPayload {
+  owner_id: string;
+  bill: LocalBillRecord;
+}
+
+interface GetBillsPayload {
+  owner_id: string;
+}
+
+interface MigrateBillsPayload {
+  owner_id: string;
+  bills: LocalBillRecord[];
+}
+
 interface RoomStatusGuestRecord {
   id: string;
   owner_id: string;
@@ -116,6 +144,9 @@ declare global {
       getGuestStays: (payload: GuestStayQueryPayload) => Promise<RoomStatusGuestRecord[]>;
       getRoomStatuses: (payload: RoomStatusQueryPayload) => Promise<RoomStatusSnapshot[]>;
       releaseRoomStatus: (payload: RoomStatusReleasePayload) => Promise<RoomStatusSnapshot | null>;
+      saveBill: (payload: SaveBillPayload) => Promise<LocalBillRecord | null>;
+      getBills: (payload: GetBillsPayload) => Promise<LocalBillRecord[]>;
+      migrateBillsToSqlite: (payload: MigrateBillsPayload) => Promise<{ importedCount: number }>;
       send?: (channel: string, data: unknown) => void;
       on?: (channel: string, callback: (...args: unknown[]) => void) => void;
       invoke?: (channel: string, data: unknown) => Promise<unknown>;
