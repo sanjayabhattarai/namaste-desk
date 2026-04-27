@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from 'react';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { Settings } from 'lucide-react';
 import { clearSession } from '@/lib/authSession';
@@ -11,6 +12,9 @@ export default function TopNav() {
   const router = useRouter();
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const session = getSession();
+  const brandTitle = session?.hotelProfile?.hotelName
+    ? `${session.hotelProfile.hotelName.toUpperCase()} NAMASTE DESK`
+    : 'NAMASTE DESK';
 
   const handleLogout = async () => {
     setIsLoggingOut(true);
@@ -24,18 +28,20 @@ export default function TopNav() {
     <nav className="bg-emerald-900 text-white p-4 shadow-lg sticky top-0 z-50">
       <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <div className="bg-white p-1 rounded-lg">
-            <span className="text-emerald-900 font-black text-xl px-1">N</span>
+          <div className="bg-white p-1 rounded-lg overflow-hidden">
+            <Image
+              src="/Namaste_desk_logo.jpg"
+              alt="Namaste Desk logo"
+              width={34}
+              height={34}
+              className="h-8 w-8 object-cover"
+              priority
+            />
           </div>
           <div>
             <h1 className="text-xl font-bold tracking-tight">
-              {session?.hotelProfile?.hotelName ?? 'Welcome to Namaste Desk'}
+              {brandTitle}
             </h1>
-            {session?.hotelProfile ? (
-              <p className="text-xs text-emerald-100/80 font-medium">
-                {session.hotelProfile.roomCount} rooms • Check-in {session.hotelProfile.checkInTime} • Check-out {session.hotelProfile.checkOutTime}
-              </p>
-            ) : null}
           </div>
         </div>
 

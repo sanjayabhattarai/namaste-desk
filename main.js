@@ -296,33 +296,38 @@ ipcMain.handle('search-guests-list', async (_event, payload) => {
   const ownerId = String(payload?.owner_id ?? '').trim();
   const query = String(payload?.query ?? '').trim();
 
-  if (!ownerId || query.length < 2) {
+  if (!ownerId || query.length < 1) {
     return [];
   }
+
+  const normalizedQuery = query.toLowerCase();
+  const normalizedPhoneQuery = query.replace(/[\s+\-()]/g, '').toLowerCase();
 
   const guests = await prisma.guestStay.findMany({
     where: {
       owner_id: ownerId,
-      OR: [
-        {
-          phone: {
-            contains: query,
-          },
-        },
-        {
-          guestName: {
-            contains: query,
-          },
-        },
-      ],
     },
     orderBy: {
       createdAt: 'desc',
     },
-    take: 25,
+    take: 300,
   });
 
-  return guests.map((guest) => ({
+  const filteredGuests = guests
+    .filter((guest) => {
+      const guestName = String(guest.guestName || '').toLowerCase();
+      const rawPhone = String(guest.phone || '').toLowerCase();
+      const normalizedPhone = rawPhone.replace(/[\s+\-()]/g, '');
+
+      return (
+        guestName.includes(normalizedQuery)
+        || rawPhone.includes(normalizedQuery)
+        || normalizedPhone.includes(normalizedPhoneQuery)
+      );
+    })
+    .slice(0, 25);
+
+  return filteredGuests.map((guest) => ({
     id: guest.id,
     guestName: guest.guestName,
     phone: guest.phone,

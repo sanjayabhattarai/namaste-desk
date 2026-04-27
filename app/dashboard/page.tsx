@@ -10,7 +10,7 @@ import PastReceiptModal from '@/components/PastReceiptModal';
 import ReceiptSearchPanel from '@/components/ReceiptSearchPanel';
 import TopNav from '@/components/TopNav';
 import { clearSession, getSession, LocalAuthSession, saveSession } from '@/lib/authSession';
-import { createAuthedSupabaseClient } from '@/lib/supabaseClient';
+import { createAuthedSupabaseClient, supabase } from '@/lib/supabaseClient';
 import { Bill, BillingDetails, BillingDraft, CheckInFormData, LocalRoomStatusSnapshot, Room, RoomStay } from '@/types/domain';
 
 const EMPTY_BILLING_DRAFT: BillingDraft = {
@@ -19,7 +19,11 @@ const EMPTY_BILLING_DRAFT: BillingDraft = {
   days: 1,
 };
 
+const SEARCH_MIN_CHARS = 4;
+const RECEIPTS_STORAGE_PREFIX = 'namasteDeskPastReceipts';
+
 const normalizePhone = (value: string) => value.replace(/[\s+\-()]/g, '');
+const getReceiptsStorageKey = (ownerId: string) => `${RECEIPTS_STORAGE_PREFIX}:${ownerId}`;
 const combineDateAndTime = (dateValue: Date | string, timeValue: string, fallbackHour: number) => {
   const date = new Date(dateValue);
   const [rawHour, rawMinute] = String(timeValue || '').split(':');
@@ -81,6 +85,7 @@ export default function NamasteDesk() {
     createdAt: string;
   }>>([]);
   const [isGuestSearchLoading, setIsGuestSearchLoading] = useState(false);
+  const [isSearchPanelOpen, setIsSearchPanelOpen] = useState(false);
   const [billingDraftsByStay, setBillingDraftsByStay] = useState<Record<number, BillingDraft>>({});
   const [session, setSession] = useState<LocalAuthSession | null | undefined>(undefined);
   const [stays, setStays] = useState<RoomStay[]>([]);
@@ -88,6 +93,63 @@ export default function NamasteDesk() {
   useEffect(() => {
     setSession(getSession());
   }, []);
+
+  useEffect(() => {
+    const ownerId = session?.userId;
+
+    if (!ownerId) {
+      return;
+    }
+
+    try {
+      const raw = window.localStorage.getItem(getReceiptsStorageKey(ownerId));
+      if (!raw) {
+        setPastReceipts([]);
+        return;
+      }
+
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) {
+        setPastReceipts([]);
+        return;
+      }
+
+      const normalized: Bill[] = parsed
+        .filter((item): item is Bill => Boolean(item && typeof item === 'object'))
+        .map((item) => ({
+          id: Number(item.id),
+          roomNumber: Number(item.roomNumber),
+          guestName: String(item.guestName ?? ''),
+          phone: String(item.phone ?? ''),
+          roomPrice: Number(item.roomPrice ?? 0),
+          advancePaid: Number(item.advancePaid ?? 0),
+          days: Number(item.days ?? 1),
+          foodItems: Array.isArray(item.foodItems) ? item.foodItems : [],
+          discount: Number(item.discount ?? 0),
+          grandTotal: Number(item.grandTotal ?? 0),
+          date: String(item.date ?? ''),
+        }))
+        .filter((item) => Number.isFinite(item.id));
+
+      setPastReceipts(normalized.sort((a, b) => b.id - a.id));
+    } catch (error) {
+      console.error('Failed to restore local past receipts:', error);
+      setPastReceipts([]);
+    }
+  }, [session?.userId]);
+
+  useEffect(() => {
+    const ownerId = session?.userId;
+    if (!ownerId) {
+      return;
+    }
+
+    try {
+      window.localStorage.setItem(getReceiptsStorageKey(ownerId), JSON.stringify(pastReceipts));
+    } catch (error) {
+      console.error('Failed to persist local past receipts:', error);
+    }
+  }, [session?.userId, pastReceipts]);
 
   const getDateKeyInTimeZone = (date: Date, timeZone: string) => {
     return new Intl.DateTimeFormat('en-CA', {
@@ -277,6 +339,24 @@ export default function NamasteDesk() {
 
     void initializeDashboard();
   }, [router, session]);
+
+  useEffect(() => {
+    const query = searchQuery.trim();
+
+    if (query.length < SEARCH_MIN_CHARS) {
+      setSearchResults([]);
+      setIsSearchPanelOpen(false);
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      void handleGuestSearch(query);
+    }, 250);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [searchQuery]);
 
   if (session === undefined || !session || !session.isApproved) {
     return (
@@ -677,19 +757,34 @@ export default function NamasteDesk() {
       )
       .map((stay) => stay.roomId),
   );
-  const handleGuestSearch = async () => {
-    const query = searchQuery.trim();
+  const handleGuestSearch = async (rawQuery?: string) => {
+    const query = (rawQuery ?? searchQuery).trim();
 
-    if (query.length < 2 || !session?.userId || !window.electronAPI?.searchGuestsList) {
+    if (query.length < SEARCH_MIN_CHARS || !window.electronAPI?.searchGuestsList) {
       setSearchResults([]);
+      setIsSearchPanelOpen(false);
+      return;
+    }
+
+    let ownerId = session?.userId ?? '';
+
+    if (!ownerId) {
+      const { data: activeSessionData } = await supabase.auth.getSession();
+      ownerId = activeSessionData.session?.user?.id ?? '';
+    }
+
+    if (!ownerId) {
+      setSearchResults([]);
+      setIsSearchPanelOpen(false);
       return;
     }
 
     setIsGuestSearchLoading(true);
+    setIsSearchPanelOpen(true);
 
     try {
       const results = await window.electronAPI.searchGuestsList({
-        owner_id: session.userId,
+        owner_id: ownerId,
         query,
       });
 
@@ -714,27 +809,48 @@ export default function NamasteDesk() {
     idPreview?: string | null;
     createdAt: string;
   }) => {
-    const source = toDisplayableIdCardSrc(guest.idCardPath ?? guest.idPreview ?? null);
+    const normalizedGuestPhone = normalizePhone(guest.phone);
+    const guestName = guest.guestName.trim().toLowerCase();
+    const guestRoom = Number(guest.roomNumber);
 
-    if (!source) {
-      window.alert('No ID card image saved for this guest.');
+    const byPhone = normalizedGuestPhone
+      ? pastReceipts.filter((bill) => normalizePhone(bill.phone) === normalizedGuestPhone)
+      : [];
+    const byNameAndRoom = pastReceipts.filter((bill) => (
+      bill.guestName.trim().toLowerCase() === guestName
+      && bill.roomNumber === guestRoom
+    ));
+    const byNameOnly = pastReceipts.filter((bill) => bill.guestName.trim().toLowerCase() === guestName);
+
+    const fallbackPool = byPhone.length > 0
+      ? byPhone
+      : (byNameAndRoom.length > 0 ? byNameAndRoom : byNameOnly);
+
+    const matchedBill = fallbackPool.sort((a, b) => b.id - a.id)[0] ?? null;
+
+    setSearchResults([]);
+    setIsSearchPanelOpen(false);
+
+    if (matchedBill) {
+      setShowPastBill(matchedBill);
       return;
     }
 
-    setIdCardViewerSrc(source);
+    window.alert('No saved bill found for this guest yet. A bill is saved after checkout.');
   };
 
   return (
     <div className="min-h-screen bg-slate-100 font-sans">
       <TopNav />
 
-      <main className="max-w-7xl mx-auto p-4 md:p-8">
+      <main className="max-w-[98vw] mx-auto p-3 md:p-4">
         <ReceiptSearchPanel
           searchQuery={searchQuery}
           onSearchChange={(value) => {
             setSearchQuery(value);
-            if (value.trim().length < 2) {
+            if (value.trim().length < SEARCH_MIN_CHARS) {
               setSearchResults([]);
+              setIsSearchPanelOpen(false);
             }
           }}
           onSearchSubmit={() => {
@@ -742,24 +858,22 @@ export default function NamasteDesk() {
           }}
           isSearching={isGuestSearchLoading}
           searchResults={searchResults}
+          minChars={SEARCH_MIN_CHARS}
+          showResults={isSearchPanelOpen}
           onSelectGuest={handleSelectSearchedGuest}
         />
 
-        <div className="grid grid-cols-1 gap-6 mb-8">
-          <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 flex items-center gap-4">
-            <div className="bg-blue-100 p-4 rounded-2xl text-blue-600">
-              <Users size={24} />
-            </div>
-            <div>
-              <p className="text-sm text-slate-500 font-bold">Occupancy</p>
-              <p className="text-2xl font-black text-slate-800">
-                {occupiedRoomIdsToday.size} / {rooms.length}
-              </p>
-            </div>
+        <div className="mb-3 flex justify-end">
+          <div className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
+            <Users size={15} className="text-blue-600" />
+            <p className="text-xs font-black text-slate-500 uppercase tracking-wide">Occupancy</p>
+            <p className="text-sm font-black text-slate-800">
+              {occupiedRoomIdsToday.size} / {rooms.length}
+            </p>
           </div>
         </div>
 
-        <div className="mb-8">
+        <div className="mb-4">
           {isRoomsLoading ? (
             <div className="bg-white rounded-3xl shadow-xl border border-slate-200 p-8 text-center">
               <p className="text-sm font-bold text-slate-500">Loading your room master...</p>
