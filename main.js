@@ -2,7 +2,12 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs/promises');
 const isDev = require('electron-is-dev');
-require('dotenv/config');
+
+// Only load dotenv in development mode
+if (isDev) {
+  require('dotenv/config');
+}
+
 const { PrismaClient } = require('@prisma/client');
 const { PrismaBetterSqlite3 } = require('@prisma/adapter-better-sqlite3');
 
