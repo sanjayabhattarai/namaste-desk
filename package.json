@@ -1,15 +1,19 @@
 {
   "name": "namaste-desk",
   "version": "0.1.0",
+  "description": "A modern hotel reception management system with room booking, guest check-in, billing, and receipt management.",
+  "author": "Namaste Desk Team",
   "main": "main.js",
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "rebuild:electron": "electron-rebuild -f -w better-sqlite3",
     "predev:desktop": "npm run rebuild:electron",
+    "rebuild:electron": "electron-builder install-app-deps",
     "dev:desktop": "concurrently -k \"next dev\" \"wait-on tcp:3000 && electron .\"",
     "build": "next build",
+    "dist": "next build && electron-builder",
     "start": "next start",
+    "postinstall": "electron-builder install-app-deps",
     "lint": "eslint"
   },
   "dependencies": {
@@ -33,12 +37,52 @@
     "dotenv": "^17.4.2",
     "electron": "^41.2.1",
     "electron-builder": "^26.8.1",
-    "electron-rebuild": "^3.2.9",
     "eslint": "^9",
     "eslint-config-next": "16.2.2",
     "prisma": "^7.7.0",
+    "sharp": "^0.34.5",
     "tailwindcss": "^4",
+    "to-ico": "^1.1.5",
     "typescript": "^5",
     "wait-on": "^9.0.5"
+  },
+  "build": {
+    "appId": "com.namastedesk.app",
+    "productName": "Namaste Desk",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "public/**/*",
+      ".next/**/*",
+      "node_modules/**/*",
+      "prisma/**/*",
+      "package.json"
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
   }
 }

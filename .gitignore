@@ -19,6 +19,10 @@
 
 # production
 /build
+/dist
+
+# documentation (local build)
+/docs
 
 # misc
 .DS_Store
