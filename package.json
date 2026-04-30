@@ -11,6 +11,8 @@
     "rebuild:electron": "electron-builder install-app-deps",
     "dev:desktop": "concurrently -k \"next dev\" \"wait-on tcp:3000 && electron .\"",
     "build": "next build",
+    "prebuild": "prisma generate",
+    "predist": "prisma generate",
     "dist": "next build && electron-builder",
     "start": "next start",
     "postinstall": "electron-builder install-app-deps",
@@ -20,8 +22,10 @@
     "@prisma/adapter-better-sqlite3": "^7.7.0",
     "@prisma/client": "^7.7.0",
     "@supabase/supabase-js": "^2.104.0",
+    "better-sqlite3": "^12.9.0",
     "date-fns": "^4.1.0",
     "electron-is-dev": "^3.0.1",
+    "electron-serve": "^3.0.1",
     "lucide-react": "^1.7.0",
     "next": "16.2.2",
     "react": "19.2.4",
@@ -37,6 +41,7 @@
     "dotenv": "^17.4.2",
     "electron": "^41.2.1",
     "electron-builder": "^26.8.1",
+    "electron-rebuild": "^3.2.9",
     "eslint": "^9",
     "eslint-config-next": "16.2.2",
     "prisma": "^7.7.0",
@@ -47,42 +52,49 @@
     "wait-on": "^9.0.5"
   },
   "build": {
-    "appId": "com.namastedesk.app",
-    "productName": "Namaste Desk",
-    "directories": {
-      "output": "dist"
-    },
-    "files": [
-      "main.js",
-      "preload.js",
-      "public/**/*",
-      ".next/**/*",
-      "node_modules/**/*",
-      "prisma/**/*",
-      "package.json"
-    ],
-    "win": {
-      "icon": "build/icon.ico",
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        },
-        {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
-        }
-      ]
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
+  "appId": "com.namastedesk.app",
+  "productName": "Namaste Desk",
+  "directories": {
+    "output": "dist"
+  },
+  "files": [
+    "main.js",
+    "preload.js",
+    "public/**/*",
+    "out/**/*",
+    "generated/**/*",
+    "node_modules/**/*",
+    "package.json"
+  ],
+  "asar": true,
+  "asarUnpack": [
+    "**/*.node",
+    "generated/**/*",
+    "node_modules/better-sqlite3/**/*",
+    "node_modules/.prisma/**/*",
+    "node_modules/@prisma/client/**/*"
+  ],
+  "extraResources": [
+    {
+      "from": "resources/namaste-template.db",
+      "to": "namaste-template.db"
     }
+  ],
+  "win": {
+    "icon": "build/icon.ico",
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      }
+    ]
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true
   }
-}
+  }
+  }
+  

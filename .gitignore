@@ -45,3 +45,12 @@ yarn-error.log*
 next-env.d.ts
 
 /lib/generated/prisma
+
+# Prisma generated client (auto-generated)
+/generated/
+
+# Local database files (not needed in repo)
+*.db
+dev.db
+namaste.db
+prisma/dev.db

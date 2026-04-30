@@ -1,14 +1,21 @@
-"use client"
-
+"use client";
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { clearSession, getSession } from '@/lib/authSession';
+import { getSession, clearSession } from '@/lib/authSession';
 
-export default function HomePage() {
+export default function RootPage() {
   const router = useRouter();
 
   useEffect(() => {
     const session = getSession();
+    const currentHref = window.location.href;
+    
+    // Debugging: This will show up in your Electron DevTools (Ctrl+Shift+I)
+    console.log("ELECTRON DEBUG:", { 
+      href: currentHref, 
+      sessionExists: !!session,
+      isApproved: session?.isApproved 
+    });
 
     if (!session) {
       router.replace('/login');
@@ -23,15 +30,10 @@ export default function HomePage() {
 
     if (session.isApproved) {
       router.replace('/dashboard');
-      return;
+    } else {
+      router.replace('/pending-approval');
     }
-
-    router.replace('/pending-approval');
   }, [router]);
 
-  return (
-    <div className="min-h-screen bg-slate-100 flex items-center justify-center">
-      <p className="text-sm font-bold text-slate-500">Redirecting...</p>
-    </div>
-  );
+  return null; 
 }

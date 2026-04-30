@@ -1,20 +1,35 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs/promises');
+const fsSync = require('fs'); 
 const isDev = require('electron-is-dev');
+const serve = require('electron-serve').default;
+const loadURL = serve({ directory: 'out' });
 
-// Only load dotenv in development mode
-if (isDev) {
-  require('dotenv/config');
-}
+// 1. Keep this for Development Mode
+const devServerUrl = process.env.ELECTRON_START_URL || 'http://localhost:3000';
 
-const { PrismaClient } = require('@prisma/client');
+// 2. Point to your CUSTOM generated folder
+const clientPath = isDev 
+  ? path.join(__dirname, 'generated', 'client')
+  : path.join(process.resourcesPath, 'app.asar.unpacked', 'generated', 'client');
+
+// 3. Load Prisma and the Adapter
+const { PrismaClient } = require(clientPath);
 const { PrismaBetterSqlite3 } = require('@prisma/adapter-better-sqlite3');
 
-const devServerUrl = process.env.ELECTRON_START_URL || 'http://localhost:3000';
-const sqliteUrl = process.env.DATABASE_URL || `file:${path.join(__dirname, 'dev.db').replace(/\\/g, '/')}`;
+// --- SECTION 4: THE SIMPLE PATH ---
+// We go back to the basic way that worked for you
+const dbDir = app.getPath('userData'); 
+const dbPath = path.join(dbDir, 'namaste.db');
+const prismaDbUrl = `file:${dbPath.split(path.sep).join('/')}`;
+
+process.env.DATABASE_URL = prismaDbUrl;
+
+// --- SECTION 5: THE SIMPLE PRISMA ---
 const prisma = new PrismaClient({
-  adapter: new PrismaBetterSqlite3({ url: sqliteUrl }),
+  adapter: new PrismaBetterSqlite3({ url: dbPath })
+  // We removed the __internal engine stuff that might be crashing it
 });
 
 const getFileExtensionFromMime = (mimeType, fallbackName = '') => {
@@ -165,7 +180,8 @@ const toBillRecord = (row) => ({
 
 const toBillStorageId = (ownerId, billId) => `${ownerId}:${String(billId).trim()}`;
 
-function createWindow() {
+// 1. Add 'async' here
+async function createWindow() {
   const mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -173,18 +189,104 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true,
     },
   });
+  // Resolve the expected production index file in several common locations.
+  const possibleProdIndexPaths = [
+    path.join(__dirname, 'out', 'index.html'),
+    path.join(process.resourcesPath, 'out', 'index.html'),
+    path.join(app.getAppPath(), 'out', 'index.html'),
+  ];
 
-  if (isDev) {
-    mainWindow.loadURL(devServerUrl);
-  } else {
-    mainWindow.loadURL('http://localhost:3000');
+  const prodIndexPath = possibleProdIndexPaths.find((p) => fsSync.existsSync(p));
+
+  // Priority: 1) Explicit ELECTRON_START_URL env (dev override)
+  //           2) Packaged export (out/index.html served via electron-serve)
+  //           3) Dev server (http://localhost:3000)
+  try {
+    if (process.env.ELECTRON_START_URL) {
+      console.log('Loading from ELECTRON_START_URL:', process.env.ELECTRON_START_URL);
+      await mainWindow.loadURL(process.env.ELECTRON_START_URL);
+      return;
+    }
+
+    if (prodIndexPath) {
+      console.log('Packaged export found, serving from:', prodIndexPath);
+      await loadURL(mainWindow);
+      return;
+    }
+
+    // Fallback to dev server if present (useful during development/testing)
+    if (isDev) {
+      console.log('Dev mode detected, loading dev server at:', devServerUrl);
+      await mainWindow.loadURL(devServerUrl);
+      return;
+    }
+
+    // Last resort: try to load the app:// handler (may still work)
+    console.warn('No production export found and not in dev mode — attempting to serve via electron-serve.');
+    await loadURL(mainWindow);
+  } catch (err) {
+    console.error('Failed to load renderer URL, attempting safe fallback:', err);
+    // Try a direct file load as a final fallback
+    try {
+      const fallback = prodIndexPath || path.join(__dirname, 'out', 'index.html');
+      if (fsSync.existsSync(fallback)) {
+        await mainWindow.loadFile(fallback);
+      } else {
+        // Show a minimal error page so the window isn't white
+        mainWindow.loadURL('data:text/html,<h1>Application failed to start</h1><p>See console for details.</p>');
+      }
+    } catch (e) {
+      console.error('Final fallback failed:', e);
+    }
   }
 }
+app.whenReady().then(async () => {
+  // 1. Ensure the main Database Directory exists in AppData
+  if (!fsSync.existsSync(dbDir)) {
+    fsSync.mkdirSync(dbDir, { recursive: true });
+    console.log("Main AppData directory created at:", dbDir);
+  }
 
-app.whenReady().then(createWindow);
+  // 2. Ensure the ID Cards Directory exists (Fixes ENOENT errors)
+  const idCardsDir = path.join(dbDir, 'guest-id-cards');
+  if (!fsSync.existsSync(idCardsDir)) {
+    fsSync.mkdirSync(idCardsDir, { recursive: true });
+    console.log("ID cards directory created at:", idCardsDir);
+  }
+
+  // 3. Database Initial Setup (Template Copying)
+  if (!fsSync.existsSync(dbPath)) {
+    console.log("Database not found. Copying template...");
+    
+    const templatePath = isDev 
+      ? path.join(__dirname, 'prisma', 'dev.db')
+      : path.join(process.resourcesPath, 'namaste-template.db');
+
+    try {
+      // This physically copies the file from your app bundle to the writable AppData folder
+      fsSync.copyFileSync(templatePath, dbPath);
+      console.log("Database template successfully copied to:", dbPath);
+    } catch (err) {
+      console.error("FATAL: Failed to copy database template:", err);
+      // If this fails, the app will crash later because the DB is missing
+    }
+  }
+
+  // 4. Connect Prisma and set SQLite optimizations
+  try {
+    await prisma.$connect();
+    // Enable Foreign Keys for SQLite relationships
+    await prisma.$executeRawUnsafe('PRAGMA foreign_keys = ON;');
+    console.log("Prisma connected successfully to:", dbPath);
+  } catch (e) {
+    console.error("Prisma Connection Error:", e);
+  }
+
+  // 5. Finally, launch the window
+ await createWindow();
+});
 
 ipcMain.handle('save-guest', async (_event, formData) => {
   const ownerId = String(formData?.owner_id ?? '').trim();

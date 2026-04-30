@@ -4,9 +4,11 @@
 // Get a free hosted Postgres database in seconds: `npx create-db`
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  output          = "../generated/client"
+  // Add this line to force the engine type
+  engineType      = "binary" 
 }
-
 datasource db {
   provider = "sqlite"
 }

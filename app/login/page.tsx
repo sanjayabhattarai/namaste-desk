@@ -122,27 +122,43 @@ export default function LoginPage() {
       hotelProfile,
     });
   };
-
   useEffect(() => {
     const session = getSession();
+    const currentHref = window.location.href;
+
+    console.log('[login] redirect check', {
+      currentHref,
+      hasSession: Boolean(session),
+      isApproved: session?.isApproved ?? null,
+      expiresAt: session?.expiresAt ?? null,
+      isExpired: session?.expiresAt ? session.expiresAt * 1000 <= Date.now() : false,
+    });
 
     if (!session) {
+      if (!currentHref.includes('/login/')) {
+        router.replace('/login');
+      }
       return;
     }
 
     if (session.expiresAt && session.expiresAt * 1000 <= Date.now()) {
       clearSession();
+      if (!currentHref.includes('/login/')) {
+        router.replace('/login');
+      }
       return;
     }
 
     if (session.isApproved) {
-      router.replace('/dashboard');
-      return;
+      if (!currentHref.includes('/dashboard/')) {
+        router.replace('/dashboard');
+      }
+    } else {
+      if (!currentHref.includes('/pending-approval/')) {
+        router.replace('/pending-approval');
+      }
     }
-
-    router.replace('/pending-approval');
   }, [router]);
-
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setErrorMessage('');
@@ -185,7 +201,7 @@ export default function LoginPage() {
               email: fallbackLogin.data.user.email ?? email,
               expiresAt: fallbackLogin.data.session.expires_at ?? null,
             }, approvalResult.isApproved, approvalResult.hotelProfile ?? hotelProfile);
-            router.replace(approvalResult.isApproved ? '/dashboard' : '/pending-approval');
+            router.push(approvalResult.isApproved ? '/dashboard' : '/pending-approval');
             return;
           }
 
@@ -262,7 +278,7 @@ export default function LoginPage() {
           email: createdUser.email ?? email,
           expiresAt: data.session.expires_at ?? null,
         }, false, hotelProfile);
-        router.replace('/pending-approval');
+        router.push('/pending-approval');
         return;
       }
 
@@ -316,7 +332,7 @@ export default function LoginPage() {
       expiresAt: data.session.expires_at ?? null,
     }, approvalResult.isApproved, approvalResult.hotelProfile);
 
-    router.replace(approvalResult.isApproved ? '/dashboard' : '/pending-approval');
+    router.push(approvalResult.isApproved ? '/dashboard' : '/pending-approval');
   };
 
   return (
